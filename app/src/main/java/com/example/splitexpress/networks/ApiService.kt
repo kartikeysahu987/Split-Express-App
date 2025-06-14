@@ -172,6 +172,16 @@ data class SettlementsResponse(
     val settlements: List<Settlement>
 )
 
+data class GetCasualNameRequest(
+    val trip_id: String
+)
+
+data class GetCasualNameResponse(
+    val casual_name: String,
+    val trip_id: String
+)
+
+
 // ---- RETROFIT SERVICE ----
 
 interface ApiService {
@@ -209,7 +219,7 @@ interface ApiService {
     @GET("trip/getallmytrip")
     suspend fun getAllMyTrips(
         @Header("token") token: String,
-        @Query("recordPerPage") recordPerPage: Int = 10,
+        @Query("recordPerPage") recordPerPage: Int = 100,
         @Query("page") page: Int = 1
     ): Response<TripsResponse>
 
@@ -251,6 +261,12 @@ interface ApiService {
         @Header("token") token: String,
         @Body request: GetSettlementsRequest
     ): Response<SettlementsResponse>
+
+    @POST("trip/getcausualnamebyuid")
+    suspend fun getCasualNameByUID(
+        @Header("token") token: String,
+        @Body request: GetCasualNameRequest
+    ): Response<GetCasualNameResponse>
 }
 
 // ---- RETROFIT INSTANCE ----

@@ -20,6 +20,7 @@ import com.example.splitexpress.ui.screens.CreateTripViewModel
 import com.example.splitexpress.ui.theme.SplitExpressTheme
 import com.example.splitexpress.utils.TokenManager
 import com.example.splitexpress.screens.HomeScreen
+import com.example.splitexpress.screens.JoinTripScreen
 import com.example.splitexpress.screens.LoginScreen
 import com.example.splitexpress.screens.SignupScreen
 import com.example.splitexpress.screens.TripDetailScreen
@@ -78,6 +79,10 @@ fun AppNavHost(
                     navController.popBackStack()
                 }
             )
+        }
+        // Add the new Join Trip route
+        composable("joinTrip") {
+            JoinTripScreen(navController = navController)
         }
         composable("tripDetails/{tripId}") { backStackEntry ->
             val tripId = backStackEntry.arguments?.getString("tripId") ?: ""
