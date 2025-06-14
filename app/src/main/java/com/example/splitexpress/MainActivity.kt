@@ -1,0 +1,88 @@
+package com.example.splitexpress
+
+import android.content.Context
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import com.example.splitexpress.ui.screens.CreateTripScreen
+import com.example.splitexpress.ui.screens.CreateTripViewModel
+import com.example.splitexpress.ui.theme.SplitExpressTheme
+import com.example.splitexpress.utils.TokenManager
+import com.example.splitexpress.screens.HomeScreen
+import com.example.splitexpress.screens.LoginScreen
+import com.example.splitexpress.screens.SignupScreen
+import com.example.splitexpress.screens.TripDetailScreen
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        setContent {
+            SplitExpressTheme {
+                val navController = rememberNavController()
+                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                    AppNavHost(
+                        navController = navController,
+                        modifier = Modifier.padding(innerPadding)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AppNavHost(
+    navController: NavHostController,
+    modifier: Modifier = Modifier
+) {
+    // Use LocalContext to access prefs
+    val context = LocalContext.current
+    val isLoggedIn = TokenManager.isLoggedIn(context)
+    val startDestination = if (isLoggedIn) "home" else "login"
+
+    NavHost(
+        navController = navController,
+        startDestination = startDestination,
+        modifier = modifier
+    ) {
+        // Authentication Routes
+        composable("login") {
+            LoginScreen(navController = navController)
+        }
+        composable("signup") {
+            SignupScreen(navController = navController)
+        }
+
+        // Main App Routes
+        composable("home") {
+            HomeScreen(navController = navController)
+        }
+        composable("createtrip") {
+            val viewModel = CreateTripViewModel()
+            CreateTripScreen(
+                viewModel = viewModel,
+                onTripCreated = {
+                    // navigate back to home or show a message
+                    navController.popBackStack()
+                }
+            )
+        }
+        composable("tripDetails/{tripId}") { backStackEntry ->
+            val tripId = backStackEntry.arguments?.getString("tripId") ?: ""
+            TripDetailScreen(navController, tripId)
+        }
+        // Add other routes as needed
+    }
+}
