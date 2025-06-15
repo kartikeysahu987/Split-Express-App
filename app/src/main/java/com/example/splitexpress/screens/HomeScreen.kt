@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.ArrowForward
+//import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,8 +24,20 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.example.splitexpress.network.RetrofitInstance
 import com.example.splitexpress.network.Trip
+import com.example.splitexpress.network.GetSettlementsRequest
+import com.example.splitexpress.network.Settlement
 import com.example.splitexpress.utils.TokenManager
 import com.vanpra.composematerialdialogs.datetime.BuildConfig
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+
+// Data class to hold settlement summary for display
+data class SettlementSummary(
+    val personName: String,
+    val amountOwedToMe: Double,
+    val amountIOwe: Double,
+    val netAmount: Double // positive if they owe me, negative if I owe them
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,10 +45,11 @@ fun HomeScreen(navController: NavController) {
     val context = LocalContext.current
 
     var trips by remember { mutableStateOf<List<Trip>>(emptyList()) }
+    var settlementSummaries by remember { mutableStateOf<List<SettlementSummary>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Load trips when screen loads
+    // Load trips and settlements when screen loads
     LaunchedEffect(Unit) {
         Log.d("HomeScreen", "LaunchedEffect started")
 
@@ -58,38 +72,54 @@ fun HomeScreen(navController: NavController) {
                 val responseBody = response.body()
                 Log.d("HomeScreen", "Response body: $responseBody")
 
-                // Safe null checking
                 val userItems = responseBody?.user_items
                 Log.d("HomeScreen", "User items: $userItems, Size: ${userItems?.size ?: 0}")
 
-                // Add detailed logging for each trip
-                userItems?.forEachIndexed { index, trip ->
-                    Log.d("HomeScreen", "Trip $index: ID=${trip.trip_id}, Name='${trip.trip_name}', Description='${trip.description}'")
+                // Sort trips by created_at date (newest first)
+                val sortedTrips = userItems?.sortedByDescending { trip ->
+                    trip.created_at
+                } ?: emptyList()
+
+                trips = sortedTrips
+                Log.d("HomeScreen", "Trips sorted by date, count: ${trips.size}")
+
+                // Load settlements for all trips concurrently
+                val settlementTasks = trips.map { trip ->
+                    async {
+                        try {
+                            val settlementResponse = RetrofitInstance.api.getSettlements(
+                                token = rawToken,
+                                request = GetSettlementsRequest(trip.trip_id ?: "")
+                            )
+
+                            if (settlementResponse.isSuccessful) {
+                                settlementResponse.body()?.settlements ?: emptyList()
+                            } else {
+                                Log.w("HomeScreen", "Failed to load settlements for trip ${trip.trip_id}: ${settlementResponse.code()}")
+                                emptyList<Settlement>()
+                            }
+                        } catch (e: Exception) {
+                            Log.e("HomeScreen", "Error loading settlements for trip ${trip.trip_id}", e)
+                            emptyList<Settlement>()
+                        }
+                    }
                 }
 
-                trips = userItems ?: emptyList()
-                Log.d("HomeScreen", "Trips set successfully, count: ${trips.size}")
+                // Wait for all settlement requests to complete
+                val allSettlements = settlementTasks.awaitAll().flatten()
+                Log.d("HomeScreen", "Total settlements loaded: ${allSettlements.size}")
 
-                // Additional logging after setting trips
-                trips.forEachIndexed { index, trip ->
-                    Log.d("HomeScreen", "Final Trip $index: Name='${trip.trip_name}' (null: ${trip.trip_name == null}, blank: ${trip.trip_name.isNullOrBlank()})")
-                }
+                // Process settlements to create summary
+                settlementSummaries = processSettlements(allSettlements)
+                Log.d("HomeScreen", "Settlement summaries created: ${settlementSummaries.size}")
+
             } else {
                 val errorMsg = "Failed to load trips: ${response.code()} ${response.message()}"
                 Log.e("HomeScreen", errorMsg)
-
-                // Try to get error body for more details
-                try {
-                    val errorBody = response.errorBody()?.string()
-                    Log.e("HomeScreen", "Error body: $errorBody")
-                } catch (e: Exception) {
-                    Log.e("HomeScreen", "Failed to read error body", e)
-                }
-
                 errorMessage = errorMsg
             }
         } catch (e: Exception) {
-            val errorMsg = "Error loading trips: ${e.localizedMessage}"
+            val errorMsg = "Error loading data: ${e.localizedMessage}"
             Log.e("HomeScreen", "Exception in LaunchedEffect", e)
             errorMessage = errorMsg
         } finally {
@@ -158,6 +188,40 @@ fun HomeScreen(navController: NavController) {
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                         modifier = Modifier.padding(top = 4.dp)
                     )
+                }
+            }
+
+            // Settlement Summary Section
+            if (!isLoading && settlementSummaries.isNotEmpty()) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Face,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "Settlement Summary",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+
+                        settlementSummaries.forEach { summary ->
+                            SettlementSummaryItem(summary)
+                        }
+                    }
                 }
             }
 
@@ -260,6 +324,82 @@ fun HomeScreen(navController: NavController) {
             }
         }
     }
+}
+
+@Composable
+fun SettlementSummaryItem(summary: SettlementSummary) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = summary.personName,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f)
+        )
+
+        when {
+            summary.netAmount > 0 -> {
+                Text(
+                    text = "owes you ₹${String.format("%.2f", summary.netAmount)}",
+                    fontSize = 14.sp,
+                    color = Color(0xFF4CAF50), // Green for money owed to you
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            summary.netAmount < 0 -> {
+                Text(
+                    text = "you owe ₹${String.format("%.2f", kotlin.math.abs(summary.netAmount))}",
+                    fontSize = 14.sp,
+                    color = Color(0xFFF44336), // Red for money you owe
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            else -> {
+                Text(
+                    text = "settled up",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.outline,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    }
+}
+
+// Function to process settlements and create summary
+fun processSettlements(settlements: List<Settlement>): List<SettlementSummary> {
+    val summaryMap = mutableMapOf<String, SettlementSummary>()
+
+    settlements.forEach { settlement ->
+        val amount = settlement.amount.toDoubleOrNull() ?: 0.0
+
+        // Update summary for the person who owes money (from)
+        val fromSummary = summaryMap.getOrPut(settlement.from) {
+            SettlementSummary(settlement.from, 0.0, 0.0, 0.0)
+        }
+        summaryMap[settlement.from] = fromSummary.copy(
+            amountIOwe = fromSummary.amountIOwe + amount
+        )
+
+        // Update summary for the person who is owed money (to)
+        val toSummary = summaryMap.getOrPut(settlement.to) {
+            SettlementSummary(settlement.to, 0.0, 0.0, 0.0)
+        }
+        summaryMap[settlement.to] = toSummary.copy(
+            amountOwedToMe = toSummary.amountOwedToMe + amount
+        )
+    }
+
+    // Calculate net amounts and filter out zero balances
+    return summaryMap.values.map { summary ->
+        summary.copy(netAmount = summary.amountOwedToMe - summary.amountIOwe)
+    }.filter { it.netAmount != 0.0 }
+        .sortedByDescending { it.netAmount } // Sort so people who owe you appear first
 }
 
 @Composable

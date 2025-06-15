@@ -118,7 +118,7 @@ data class PayRequest(
     val trip_id: String,
     val payer_name: String,
     val reciever_name: String,
-    val amount: Double,
+    val amount: String,
     val description: String
 )
 
@@ -126,7 +126,7 @@ data class SettleRequest(
     val trip_id: String,
     val payer_name: String,
     val reciever_name: String,
-    val amount: Double,
+    val amount: String,
     val description: String?
 )
 

@@ -24,6 +24,7 @@ import com.example.splitexpress.screens.JoinTripScreen
 import com.example.splitexpress.screens.LoginScreen
 import com.example.splitexpress.screens.SignupScreen
 import com.example.splitexpress.screens.TripDetailScreen
+import com.example.splitexpress.screens.PayScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -88,6 +89,13 @@ fun AppNavHost(
             val tripId = backStackEntry.arguments?.getString("tripId") ?: ""
             TripDetailScreen(navController, tripId)
         }
+
+        // Add the new Pay Screen route
+        composable("payScreen/{tripId}") { backStackEntry ->
+            val tripId = backStackEntry.arguments?.getString("tripId") ?: ""
+            PayScreen(navController = navController, tripId = tripId)
+        }
+
         // Add other routes as needed
     }
 }
