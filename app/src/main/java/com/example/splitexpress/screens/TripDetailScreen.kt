@@ -53,11 +53,63 @@ fun TripDetailScreen(
     var settlements by remember { mutableStateOf<List<Settlement>>(emptyList()) }
     var currentUserName by remember { mutableStateOf<String?>(null) }
     var inviteCode by remember { mutableStateOf<String?>(null) }
+    var tripName by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var selectedTab by remember { mutableStateOf(0) }
-    var isSettling by remember { mutableStateOf<String?>(null) } // Track which settlement is being processed
+    var isSettling by remember { mutableStateOf<String?>(null) }
     var isRefreshing by remember { mutableStateOf(false) }
+
+    // Function to fetch trip details including invite code
+    suspend fun fetchTripDetails(token: String) {
+        try {
+            Log.d("TripDetailScreen", "Fetching trip details for tripId: $tripId")
+
+            // Try getAllMyTrips first
+            val myTripsResponse = RetrofitInstance.api.getAllMyTrips(token = token)
+            if (myTripsResponse.isSuccessful) {
+                val trips = myTripsResponse.body()?.user_items ?: emptyList()
+                Log.d("TripDetailScreen", "Found ${trips.size} trips in getAllMyTrips")
+
+                val currentTrip = trips.find { trip ->
+                    trip.trip_id == tripId || trip._id == tripId
+                }
+
+                if (currentTrip != null) {
+                    inviteCode = currentTrip.invite_code
+                    tripName = currentTrip.trip_name
+                    Log.d("TripDetailScreen", "Found trip in getAllMyTrips - Invite code: $inviteCode, Name: $tripName")
+                } else {
+                    Log.d("TripDetailScreen", "Trip not found in getAllMyTrips, trying getAllTrips")
+
+                    // If not found in my trips, try all trips
+                    val allTripsResponse = RetrofitInstance.api.getAllTrips(token = token)
+                    if (allTripsResponse.isSuccessful) {
+                        val allTrips = allTripsResponse.body()?.user_items ?: emptyList()
+                        Log.d("TripDetailScreen", "Found ${allTrips.size} trips in getAllTrips")
+
+                        val foundTrip = allTrips.find { trip ->
+                            trip.trip_id == tripId || trip._id == tripId
+                        }
+
+                        if (foundTrip != null) {
+                            inviteCode = foundTrip.invite_code
+                            tripName = foundTrip.trip_name
+                            Log.d("TripDetailScreen", "Found trip in getAllTrips - Invite code: $inviteCode, Name: $tripName")
+                        } else {
+                            Log.e("TripDetailScreen", "Trip not found in any API call")
+                        }
+                    } else {
+                        Log.e("TripDetailScreen", "getAllTrips failed: ${allTripsResponse.code()}")
+                    }
+                }
+            } else {
+                Log.e("TripDetailScreen", "getAllMyTrips failed: ${myTripsResponse.code()}")
+            }
+        } catch (e: Exception) {
+            Log.e("TripDetailScreen", "Exception fetching trip details", e)
+        }
+    }
 
     // Function to refresh data
     fun refreshData() {
@@ -69,6 +121,9 @@ fun TripDetailScreen(
                     errorMessage = "No token found"
                     return@launch
                 }
+
+                // Refresh trip details including invite code
+                fetchTripDetails(token)
 
                 // Fetch transactions
                 val transactionsResponse = RetrofitInstance.api.getAllTransactions(
@@ -140,7 +195,10 @@ fun TripDetailScreen(
 
             Log.d("TripDetailScreen", "Making API calls with trip_id: $tripId")
 
-            // First, get current user's casual name
+            // Fetch trip details including invite code
+            fetchTripDetails(token)
+
+            // Get current user's casual name
             val casualNameResponse = RetrofitInstance.api.getCasualNameByUID(
                 token = token,
                 request = GetCasualNameRequest(trip_id = tripId)
@@ -152,16 +210,6 @@ fun TripDetailScreen(
             } else {
                 Log.e("TripDetailScreen", "Failed to get casual name: ${casualNameResponse.code()}")
             }
-
-            // Fetch invite code from trip details
-            val tripDetailsResponse = RetrofitInstance.api.getAllMyTrips(token = token)
-            if (tripDetailsResponse.isSuccessful) {
-                val trips = tripDetailsResponse.body()?.user_items ?: emptyList()
-                val currentTrip = trips.find { it.trip_id == tripId }
-                inviteCode = currentTrip?.invite_code
-                Log.d("TripDetailScreen", "Invite code: $inviteCode")
-            }
-
 
             // Fetch transactions
             val transactionsResponse = RetrofitInstance.api.getAllTransactions(
@@ -225,7 +273,7 @@ fun TripDetailScreen(
             TopAppBar(
                 title = {
                     Text(
-                        "Trip Details",
+                        tripName ?: "Trip Details",
                         fontWeight = FontWeight.Bold
                     )
                 },
@@ -282,7 +330,7 @@ fun TripDetailScreen(
                 .padding(paddingValues)
                 .padding(16.dp)
         ) {
-            // Invite Code Card - Replacing Trip ID display
+            // Invite Code Card
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -293,6 +341,8 @@ fun TripDetailScreen(
                             val clip = ClipData.newPlainText("Invite Code", code)
                             clipboard.setPrimaryClip(clip)
                             Toast.makeText(context, "Invite code copied to clipboard!", Toast.LENGTH_SHORT).show()
+                        } ?: run {
+                            Toast.makeText(context, "Invite code not available", Toast.LENGTH_SHORT).show()
                         }
                     },
                 colors = CardDefaults.cardColors(
@@ -315,17 +365,36 @@ fun TripDetailScreen(
                             fontWeight = FontWeight.Medium
                         )
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = inviteCode ?: "Loading...",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = "Tap to copy",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                        )
+
+                        if (inviteCode != null) {
+                            Text(
+                                text = inviteCode!!,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "Tap to copy",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                            )
+                        } else {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Loading...",
+                                    fontSize = 16.sp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                )
+                            }
+                        }
                     }
 
                     Icon(
@@ -335,6 +404,16 @@ fun TripDetailScreen(
                         modifier = Modifier.size(24.dp)
                     )
                 }
+            }
+
+            // Debug information (remove in production)
+            if (isLoading) {
+                Text(
+                    text = "Debug: tripId = $tripId",
+                    fontSize = 12.sp,
+                    color = Color.Gray,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
             }
 
             when {

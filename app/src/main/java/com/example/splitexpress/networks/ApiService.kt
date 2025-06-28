@@ -51,6 +51,29 @@ data class UsersResponse(
     val user_items: List<User>
 )
 
+// ---- OTP DATA CLASSES ----
+
+data class OTPRequest(
+    val email: String
+)
+
+data class OTPResponse(
+    val message: String,
+    val email: String
+)
+
+data class OTPVerification(
+    val email: String,
+    val otp: String
+)
+
+data class OTPVerificationResponse(
+    val message: String,
+    val token: String,
+    val refresh_token: String,
+    val user: User
+)
+
 // ---- TRIP DATA CLASSES ----
 
 data class CreateTripRequest(
@@ -67,9 +90,7 @@ data class CreateTripResponse(
 data class Trip(
     val _id: String,
     val trip_id: String,
-    @SerializedName("name")
     val trip_name: String,
-//    val name:String,
     val description: String?,
     val members: List<String>,
     val creator_id: String,
@@ -79,7 +100,8 @@ data class Trip(
 
 data class TripsResponse(
     val total_count: Int,
-    val user_items: List<Trip>
+    @SerializedName("trips")
+    val user_items: List<Trip>  // Keep user_items but map it to "trips" from backend
 )
 
 data class GetMembersRequest(
@@ -202,6 +224,13 @@ interface ApiService {
         @Header("token") token: String
     ): Response<User>
 
+    // OTP endpoints
+    @POST("users/getotp")
+    suspend fun getOTP(@Body request: OTPRequest): Response<OTPResponse>
+
+    @POST("users/verifyotp")
+    suspend fun verifyOTP(@Body request: OTPVerification): Response<OTPVerificationResponse>
+
     // Trip endpoints
     @POST("trip/create")
     suspend fun createTrip(
@@ -212,8 +241,8 @@ interface ApiService {
     @GET("trip/getalltrip")
     suspend fun getAllTrips(
         @Header("token") token: String,
-        @Query("recordPerPage") recordPerPage: Int = 10,
-        @Query("page") page: Int = 1
+//        @Query("recordPerPage") recordPerPage: Int = 10,
+//        @Query("page") page: Int = 1
     ): Response<TripsResponse>
 
     @GET("trip/getallmytrip")

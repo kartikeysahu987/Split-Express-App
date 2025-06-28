@@ -134,7 +134,15 @@ fun LoginScreen(navController: NavController) {
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-
+        TextButton(
+            onClick = {
+                navController.navigate("otplogin")
+            },
+            enabled = !isLoading
+        ) {
+            Text("Forget Password ? Get Otp login")
+        }
+        Spacer(modifier = Modifier.height(16.dp))
         TextButton(
             onClick = {
                 navController.navigate("signup")

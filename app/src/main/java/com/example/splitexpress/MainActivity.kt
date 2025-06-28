@@ -25,6 +25,7 @@ import com.example.splitexpress.screens.LoginScreen
 import com.example.splitexpress.screens.SignupScreen
 import com.example.splitexpress.screens.TripDetailScreen
 import com.example.splitexpress.screens.PayScreen
+import com.example.splitexpress.screens.OTPLoginScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,6 +66,9 @@ fun AppNavHost(
         }
         composable("signup") {
             SignupScreen(navController = navController)
+        }
+        composable("otplogin") {
+            OTPLoginScreen(navController = navController)
         }
 
         // Main App Routes
