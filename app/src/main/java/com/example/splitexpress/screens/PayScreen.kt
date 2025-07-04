@@ -1,21 +1,33 @@
 package com.example.splitexpress.screens
 
 import android.util.Log
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -27,7 +39,6 @@ import androidx.navigation.NavController
 import com.example.splitexpress.network.*
 import com.example.splitexpress.utils.TokenManager
 import kotlinx.coroutines.launch
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PayScreen(
@@ -51,96 +62,81 @@ fun PayScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var successMessage by remember { mutableStateOf<String?>(null) }
     var showMemberSelection by remember { mutableStateOf(false) }
-    // Add these new state variables after the existing ones
-    var splitEqually by remember { mutableStateOf(false) }
+
+    // Enhanced split options
+    var splitMode by remember { mutableStateOf("individual") }
     var selectedMembers by remember { mutableStateOf<Set<String>>(emptySet()) }
     var individualAmounts by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var includeCurrentUser by remember { mutableStateOf(true) }
 
-
+    // Animation states
+    val animatedAlpha by animateFloatAsState(
+        targetValue = if (isLoading) 0.3f else 1f,
+        animationSpec = tween(500)
+    )
+    val cardScale by animateFloatAsState(
+        targetValue = if (isProcessing) 0.98f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)
+    )
 
     // Load trip details and members
     LaunchedEffect(tripId) {
         Log.d("PayScreen", "Loading data for trip: $tripId")
-
         try {
             val token = TokenManager.getToken(context)
             if (token.isNullOrBlank()) {
-                errorMessage = "No token found"
+                errorMessage = "Authentication required"
                 isLoading = false
                 return@LaunchedEffect
             }
 
-            // Step 1: Get current user's casual name for this trip
+            // Get current user's casual name
             try {
                 val casualNameResponse = RetrofitInstance.api.getCasualNameByUID(
                     token = token,
                     request = GetCasualNameRequest(trip_id = tripId)
                 )
-
                 if (casualNameResponse.isSuccessful) {
                     currentUserName = casualNameResponse.body()?.casual_name
-                    Log.d("PayScreen", "Current user name: $currentUserName")
-                } else {
-                    Log.w("PayScreen", "Failed to get casual name: ${casualNameResponse.code()}")
                 }
             } catch (e: Exception) {
                 Log.e("PayScreen", "Error getting casual name", e)
             }
 
-            // Step 2: Get trip details from user's trips to find invite code
+            // Get trip details
             try {
                 val myTripsResponse = RetrofitInstance.api.getAllMyTrips(token)
-
                 if (myTripsResponse.isSuccessful) {
                     val userTrips = myTripsResponse.body()?.user_items ?: emptyList()
                     tripDetails = userTrips.find { it.trip_id == tripId }
-
-                    Log.d("PayScreen", "Found trip details: ${tripDetails?.trip_name}")
-                    Log.d("PayScreen", "Trip invite code: ${tripDetails?.invite_code}")
-                } else {
-                    Log.e("PayScreen", "Failed to get user trips: ${myTripsResponse.code()}")
                 }
             } catch (e: Exception) {
                 Log.e("PayScreen", "Error getting trip details", e)
             }
 
-            // Step 3: Get trip members using invite code
+            // Get trip members
             tripDetails?.invite_code?.let { inviteCode ->
                 try {
                     val membersResponse = RetrofitInstance.api.getMembers(
                         token = token,
                         request = GetMembersRequest(invite_code = inviteCode)
                     )
-
                     if (membersResponse.isSuccessful) {
                         val membersData = membersResponse.body()
                         freeMembers = membersData?.free_members ?: emptyList()
                         notFreeMembers = membersData?.not_free_members ?: emptyList()
-                        allMembers = freeMembers + notFreeMembers
-
-                        // Remove current user from the list of selectable members
-                        allMembers = allMembers.filter { it != currentUserName }
-
-                        Log.d("PayScreen", "Free members: $freeMembers")
-                        Log.d("PayScreen", "Not free members: $notFreeMembers")
-                        Log.d("PayScreen", "All selectable members: $allMembers")
+                        allMembers = (freeMembers + notFreeMembers).filter { it != currentUserName }
                     } else {
-                        Log.e("PayScreen", "Failed to get members: ${membersResponse.code()}")
-                        errorMessage = "Failed to load trip members"
+                        errorMessage = "Failed to load members"
                     }
                 } catch (e: Exception) {
-                    Log.e("PayScreen", "Error getting members", e)
-                    errorMessage = "Error loading trip members: ${e.message}"
+                    errorMessage = "Network error: ${e.message}"
                 }
             } ?: run {
-                errorMessage = "Could not find trip invite code"
-                Log.e("PayScreen", "Trip invite code not found")
+                errorMessage = "Trip not found"
             }
-
         } catch (e: Exception) {
-            errorMessage = "Failed to load trip data: ${e.message}"
-            Log.e("PayScreen", "Exception occurred", e)
+            errorMessage = "Failed to load data: ${e.message}"
         } finally {
             isLoading = false
         }
@@ -148,164 +144,142 @@ fun PayScreen(
 
     // Handle payment submission
     fun submitPayment() {
-        if (splitEqually) {
-            // Validation for split equally
-            if (selectedMembers.isEmpty()) {
-                errorMessage = "Please select at least one member to split with"
-                return
-            }
+        when (splitMode) {
+            "individual" -> {
+                if (selectedMember.isNullOrBlank() || amount.isBlank() || amount.toDoubleOrNull() == null || amount.toDouble() <= 0) {
+                    errorMessage = "Please select member and enter valid amount"
+                    return
+                }
 
-            if (amount.isBlank() || amount.toDoubleOrNull() == null || amount.toDouble() <= 0) {
-                errorMessage = "Please enter a valid total amount"
-                return
-            }
-
-            if (currentUserName.isNullOrBlank()) {
-                errorMessage = "Unable to identify current user"
-                return
-            }
-
-            scope.launch {
-                isProcessing = true
-                errorMessage = null
-
-                try {
-                    val token = TokenManager.getToken(context)
-                    if (token.isNullOrBlank()) {
-                        errorMessage = "Authentication failed"
-                        return@launch
-                    }
-
-                    val totalAmount = amount.toDouble()
-                    val totalPeople = selectedMembers.size + if (includeCurrentUser) 1 else 0
-                    val perPersonAmount = totalAmount / totalPeople
-                    val formattedAmount = String.format("%.2f", perPersonAmount)
-
-                    var successCount = 0
-                    var failCount = 0
-                    val errors = mutableListOf<String>()
-
-                    // Send payment to each selected member
-                    for (member in selectedMembers) {
-                        try {
-                            val payRequest = PayRequest(
-                                trip_id = tripId,
-                                payer_name = currentUserName!!,
-                                reciever_name = member,
-                                amount = formattedAmount,
-                                description = description.ifBlank {
-                                    "Split payment: ₹$formattedAmount each from ₹$amount total (${if (includeCurrentUser) "including" else "excluding"} yourself)"
-                                }
-                            )
-
-                            val response = RetrofitInstance.api.pay(
-                                token = token,
-                                request = payRequest
-                            )
-
-                            if (response.isSuccessful) {
-                                successCount++
-                            } else {
-                                failCount++
-                                errors.add("Failed to pay $member: ${response.message()}")
-                            }
-
-                        } catch (e: Exception) {
-                            failCount++
-                            errors.add("Error paying $member: ${e.message}")
-                        }
-                    }
-
-                    if (successCount > 0) {
-                        if (failCount == 0) {
-                            val totalPeopleText = if (includeCurrentUser) "${totalPeople} people" else "${selectedMembers.size} members"
-                            successMessage = "Successfully split ₹$amount among $totalPeopleText (₹$formattedAmount each)"
+                scope.launch {
+                    isProcessing = true
+                    errorMessage = null
+                    try {
+                        val token = TokenManager.getToken(context)
+                        val payRequest = PayRequest(
+                            trip_id = tripId,
+                            payer_name = currentUserName!!,
+                            reciever_name = selectedMember!!,
+                            amount = amount,
+                            description = description.ifBlank { "Payment to $selectedMember" }
+                        )
+                        val response = RetrofitInstance.api.pay(token = token.toString(), request = payRequest)
+                        if (response.isSuccessful) {
+                            successMessage = "Payment successful!"
+                            selectedMember = null
+                            amount = ""
+                            description = ""
+                            kotlinx.coroutines.delay(2000)
+                            navController.popBackStack()
                         } else {
-                            successMessage = "Partially successful: $successCount payments sent, $failCount failed"
-                            errorMessage = "Some payments failed: ${errors.joinToString(", ")}"
+                            errorMessage = "Payment failed: ${response.message()}"
+                        }
+                    } catch (e: Exception) {
+                        errorMessage = "Payment failed: ${e.message}"
+                    } finally {
+                        isProcessing = false
+                    }
+                }
+            }
+
+            "equal" -> {
+                if (selectedMembers.isEmpty() || amount.isBlank() || amount.toDoubleOrNull() == null) {
+                    errorMessage = "Please select members and enter valid amount"
+                    return
+                }
+
+                scope.launch {
+                    isProcessing = true
+                    errorMessage = null
+                    try {
+                        val token = TokenManager.getToken(context)
+                        val totalAmount = amount.toDouble()
+                        val totalPeople = selectedMembers.size + if (includeCurrentUser) 1 else 0
+                        val perPersonAmount = String.format("%.2f", totalAmount / totalPeople)
+
+                        var successCount = 0
+                        for (member in selectedMembers) {
+                            try {
+                                val payRequest = PayRequest(
+                                    trip_id = tripId,
+                                    payer_name = currentUserName!!,
+                                    reciever_name = member,
+                                    amount = perPersonAmount,
+                                    description = description.ifBlank { "Split payment: ₹$perPersonAmount" }
+                                )
+                                val response = RetrofitInstance.api.pay(token = token.toString(), request = payRequest)
+                                if (response.isSuccessful) successCount++
+                            } catch (e: Exception) {
+                                Log.e("PayScreen", "Error paying $member", e)
+                            }
                         }
 
-                        // Clear form on success
-                        if (failCount == 0) {
+                        if (successCount > 0) {
+                            successMessage = "Split payment successful!"
                             selectedMembers = emptySet()
                             amount = ""
                             description = ""
-                            includeCurrentUser = true
-
-                            kotlinx.coroutines.delay(3000)
+                            kotlinx.coroutines.delay(2000)
                             navController.popBackStack()
+                        } else {
+                            errorMessage = "All payments failed"
                         }
-                    } else {
-                        errorMessage = "All payments failed: ${errors.joinToString(", ")}"
+                    } catch (e: Exception) {
+                        errorMessage = "Split payment failed: ${e.message}"
+                    } finally {
+                        isProcessing = false
                     }
-
-                } catch (e: Exception) {
-                    errorMessage = "Split payment failed: ${e.message}"
-                    Log.e("PayScreen", "Split payment exception", e)
-                } finally {
-                    isProcessing = false
                 }
             }
-        } else {
-            // Individual payment logic (keep your existing code here)
-            if (selectedMember.isNullOrBlank()) {
-                errorMessage = "Please select a member to pay"
-                return
-            }
 
-            if (amount.isBlank() || amount.toDoubleOrNull() == null || amount.toDouble() <= 0) {
-                errorMessage = "Please enter a valid amount"
-                return
-            }
+            "custom" -> {
+                val validAmounts = individualAmounts.filter { (member, amt) ->
+                    selectedMembers.contains(member) && amt.isNotBlank() && amt.toDoubleOrNull() != null && amt.toDouble() > 0
+                }
 
-            if (currentUserName.isNullOrBlank()) {
-                errorMessage = "Unable to identify current user"
-                return
-            }
+                if (validAmounts.isEmpty()) {
+                    errorMessage = "Please enter valid amounts for selected members"
+                    return
+                }
 
-            scope.launch {
-                isProcessing = true
-                errorMessage = null
+                scope.launch {
+                    isProcessing = true
+                    errorMessage = null
+                    try {
+                        val token = TokenManager.getToken(context)
+                        var successCount = 0
 
-                try {
-                    val token = TokenManager.getToken(context)
-                    if (token.isNullOrBlank()) {
-                        errorMessage = "Authentication failed"
-                        return@launch
+                        for ((member, memberAmount) in validAmounts) {
+                            try {
+                                val payRequest = PayRequest(
+                                    trip_id = tripId,
+                                    payer_name = currentUserName!!,
+                                    reciever_name = member,
+                                    amount = memberAmount,
+                                    description = description.ifBlank { "Custom payment: ₹$memberAmount" }
+                                )
+                                val response = RetrofitInstance.api.pay(token = token.toString(), request = payRequest)
+                                if (response.isSuccessful) successCount++
+                            } catch (e: Exception) {
+                                Log.e("PayScreen", "Error paying $member", e)
+                            }
+                        }
+
+                        if (successCount > 0) {
+                            successMessage = "Custom payments successful!"
+                            selectedMembers = emptySet()
+                            individualAmounts = emptyMap()
+                            description = ""
+                            kotlinx.coroutines.delay(2000)
+                            navController.popBackStack()
+                        } else {
+                            errorMessage = "All payments failed"
+                        }
+                    } catch (e: Exception) {
+                        errorMessage = "Custom payment failed: ${e.message}"
+                    } finally {
+                        isProcessing = false
                     }
-
-                    val payRequest = PayRequest(
-                        trip_id = tripId,
-                        payer_name = currentUserName!!,
-                        reciever_name = selectedMember!!,
-                        amount = amount.toString(),
-                        description = description.ifBlank { "Payment to $selectedMember" }
-                    )
-
-                    val response = RetrofitInstance.api.pay(
-                        token = token,
-                        request = payRequest
-                    )
-
-                    if (response.isSuccessful) {
-                        successMessage = "Payment of ₹$amount to $selectedMember was successful!"
-                        selectedMember = null
-                        amount = ""
-                        description = ""
-
-                        kotlinx.coroutines.delay(2000)
-                        navController.popBackStack()
-                    } else {
-                        val errorBody = response.errorBody()?.string()
-                        errorMessage = "Payment failed: ${response.code()} - ${response.message()}"
-                        Log.e("PayScreen", "Payment API Error: ${response.code()}, Body: $errorBody")
-                    }
-
-                } catch (e: Exception) {
-                    errorMessage = "Payment failed: ${e.message}"
-                    Log.e("PayScreen", "Payment exception", e)
-                } finally {
-                    isProcessing = false
                 }
             }
         }
@@ -317,7 +291,8 @@ fun PayScreen(
                 title = {
                     Text(
                         "Make Payment",
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 20.sp
                     )
                 },
                 navigationIcon = {
@@ -326,529 +301,676 @@ fun PayScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface
                 )
             )
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.background
     ) { paddingValues ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+        AnimatedVisibility(
+            visible = !isLoading,
+            enter = fadeIn(animationSpec = tween(600)) + slideInVertically(initialOffsetY = { it / 4 }),
+            exit = fadeOut(animationSpec = tween(400))
         ) {
-            when {
-                isLoading -> {
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(400.dp), // Give it some height
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                CircularProgressIndicator()
-                                Text(
-                                    text = "Loading trip data...",
-                                    modifier = Modifier.padding(top = 8.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                errorMessage != null && allMembers.isEmpty() -> {
-                    item {
-                        // Error state when loading failed
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(400.dp),
-                            verticalArrangement = Arrangement.Center,
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.errorContainer
-                                )
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(16.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Text(
-                                        text = "Error Loading Trip Data",
-                                        fontSize = 18.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onErrorContainer
-                                    )
-                                    Text(
-                                        text = errorMessage!!,
-                                        modifier = Modifier.padding(top = 8.dp),
-                                        color = MaterialTheme.colorScheme.onErrorContainer,
-                                        textAlign = TextAlign.Center
-                                    )
-                                    Button(
-                                        onClick = {
-                                            isLoading = true
-                                            errorMessage = null
-                                        },
-                                        modifier = Modifier.padding(top = 16.dp)
-                                    ) {
-                                        Text("Retry")
-                                    }
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+                    .padding(horizontal = 20.dp)
+                    .alpha(animatedAlpha),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+                contentPadding = PaddingValues(vertical = 20.dp)
+            ) {
+                when {
+                    errorMessage != null && allMembers.isEmpty() -> {
+                        item {
+                            ErrorCard(
+                                message = errorMessage!!,
+                                onRetry = {
+                                    isLoading = true
+                                    errorMessage = null
                                 }
-                            }
+                            )
                         }
                     }
-                }
 
-                else -> {
-                    item {
-                        // Payment Form
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surface
-                            ),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(20.dp),
-                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    else -> {
+                        // Trip Info Card
+                        item {
+                            AnimatedVisibility(
+                                visible = tripDetails != null,
+                                enter = slideInVertically() + fadeIn()
                             ) {
-                                Text(
-                                    text = "Payment Details",
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-
-                                // Trip Info
                                 tripDetails?.let { trip ->
-                                    Card(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                                        )
-                                    ) {
-                                        Column(modifier = Modifier.padding(12.dp)) {
-                                            Text(
-                                                text = trip.trip_name,
-                                                fontSize = 16.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                color = MaterialTheme.colorScheme.onSurface
-                                            )
-                                            Text(
-                                                text = "${allMembers.size + 1} members total",
-                                                fontSize = 12.sp,
-                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                                            )
-                                        }
-                                    }
-                                }
-
-                                // Current User Info
-                                currentUserName?.let { userName ->
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 8.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Person,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = "Paying as: $userName",
-                                            fontSize = 14.sp,
-                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                                        )
-                                    }
-                                }
-
-                                // Split Equally Toggle
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "Split Equally",
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                    Switch(
-                                        checked = splitEqually,
-                                        onCheckedChange = {
-                                            splitEqually = it
-                                            if (it) {
-                                                selectedMember = null
-                                                individualAmounts = emptyMap()
-                                            } else {
-                                                selectedMembers = emptySet()
-                                            }
-                                            errorMessage = null
-                                        }
-                                    )
-                                }
-
-                                if (splitEqually) {
-                                    // Include Current User Toggle
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "Include myself in split",
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                        Switch(
-                                            checked = includeCurrentUser,
-                                            onCheckedChange = { includeCurrentUser = it }
-                                        )
-                                    }
-
-                                    // Multiple Member Selection for Split Equally
-                                    Card(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                                        )
-                                    ) {
-                                        Column(modifier = Modifier.padding(12.dp)) {
-                                            Text(
-                                                text = "Select Members to Split With",
-                                                fontSize = 14.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                modifier = Modifier.padding(bottom = 8.dp)
-                                            )
-
-                                            // Use a Column instead of LazyColumn inside LazyColumn
-                                            Column {
-                                                allMembers.forEach { member ->
-                                                    Row(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .padding(vertical = 4.dp),
-                                                        verticalAlignment = Alignment.CenterVertically
-                                                    ) {
-                                                        Checkbox(
-                                                            checked = selectedMembers.contains(member),
-                                                            onCheckedChange = { isChecked ->
-                                                                selectedMembers = if (isChecked) {
-                                                                    selectedMembers + member
-                                                                } else {
-                                                                    selectedMembers - member
-                                                                }
-                                                            }
-                                                        )
-                                                        Spacer(modifier = Modifier.width(8.dp))
-                                                        Text(
-                                                            text = member,
-                                                            fontSize = 14.sp
-                                                        )
-                                                    }
-                                                }
-                                            }
-
-                                            if (selectedMembers.isNotEmpty()) {
-                                                val totalPeople = selectedMembers.size + if (includeCurrentUser) 1 else 0
-                                                Text(
-                                                    text = "Selected: ${selectedMembers.size} members${if (includeCurrentUser) " + you" else ""} = $totalPeople people total",
-                                                    fontSize = 12.sp,
-                                                    color = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.padding(top = 8.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    // Total Amount Input for Split Equally
-                                    OutlinedTextField(
-                                        value = amount,
-                                        onValueChange = { amount = it },
-                                        label = { Text("Total Amount to Split (₹)") },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        modifier = Modifier.fillMaxWidth(),
-                                        shape = RoundedCornerShape(12.dp),
-                                        singleLine = true,
-                                        prefix = { Text("₹") },
-                                        supportingText = {
-                                            if (selectedMembers.isNotEmpty() && amount.isNotBlank()) {
-                                                val totalAmount = amount.toDoubleOrNull() ?: 0.0
-                                                val totalPeople = selectedMembers.size + if (includeCurrentUser) 1 else 0
-                                                if (totalPeople > 0) {
-                                                    val perPerson = totalAmount / totalPeople
-                                                    Text("₹${String.format("%.2f", perPerson)} per person ($totalPeople people)")
-                                                }
-                                            }
-                                        }
-                                    )
-                                } else {
-                                    // Individual Member Selection
-                                    OutlinedButton(
-                                        onClick = {
-                                            if (allMembers.isNotEmpty()) {
-                                                showMemberSelection = true
-                                            } else {
-                                                errorMessage = "No other members found in this trip"
-                                            }
-                                        },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(56.dp),
-                                        shape = RoundedCornerShape(12.dp),
-                                        enabled = allMembers.isNotEmpty()
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                text = when {
-                                                    allMembers.isEmpty() -> "No members available"
-                                                    selectedMember != null -> selectedMember!!
-                                                    else -> "Select member to pay"
-                                                },
-                                                fontSize = 16.sp,
-                                                color = if (selectedMember != null)
-                                                    MaterialTheme.colorScheme.onSurface
-                                                else
-                                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                                            )
-                                            Icon(
-                                                imageVector = Icons.Default.Person,
-                                                contentDescription = null,
-                                                tint = if (allMembers.isNotEmpty())
-                                                    MaterialTheme.colorScheme.primary
-                                                else
-                                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                                            )
-                                        }
-                                    }
-
-                                    // Amount Input for Individual Payment
-                                    OutlinedTextField(
-                                        value = amount,
-                                        onValueChange = { amount = it },
-                                        label = { Text("Amount (₹)") },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        modifier = Modifier.fillMaxWidth(),
-                                        shape = RoundedCornerShape(12.dp),
-                                        singleLine = true,
-                                        prefix = { Text("₹") }
-                                    )
-                                }
-
-                                // Description Input
-                                OutlinedTextField(
-                                    value = description,
-                                    onValueChange = { description = it },
-                                    label = { Text("Description (Optional)") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(12.dp),
-                                    maxLines = 3,
-                                    placeholder = { Text("What's this payment for?") }
-                                )
-
-                                // Error and Success Messages
-                                errorMessage?.let { error ->
-                                    Card(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = MaterialTheme.colorScheme.errorContainer
-                                        )
-                                    ) {
-                                        Text(
-                                            text = error,
-                                            modifier = Modifier.padding(12.dp),
-                                            color = MaterialTheme.colorScheme.onErrorContainer
-                                        )
-                                    }
-                                }
-
-                                successMessage?.let { success ->
-                                    Card(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = Color(0xFF4CAF50).copy(alpha = 0.1f)
-                                        )
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(12.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Check,
-                                                contentDescription = null,
-                                                tint = Color(0xFF4CAF50),
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                text = success,
-                                                color = Color(0xFF4CAF50),
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                        }
-                                    }
-                                }
-
-                                // Submit Button
-                                Button(
-                                    onClick = { submitPayment() },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(56.dp),
-                                    enabled = !isProcessing &&
-                                            amount.isNotBlank() &&
-                                            allMembers.isNotEmpty() &&
-                                            if (splitEqually) selectedMembers.isNotEmpty() else selectedMember != null,
-                                    shape = RoundedCornerShape(12.dp)
-                                ) {
-                                    if (isProcessing) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(20.dp),
-                                            color = Color.White
-                                        )
-                                    } else {
-                                        Text(
-                                            text = if (splitEqually) "Split Payment" else "Make Payment",
-                                            fontSize = 16.sp,
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                    }
+                                    TripInfoCard(trip = trip, memberCount = allMembers.size + 1)
                                 }
                             }
+                        }
+
+                        // Payment Mode Selection
+                        item {
+                            PaymentModeSelector(
+                                selectedMode = splitMode,
+                                onModeChanged = { mode ->
+                                    splitMode = mode
+                                    selectedMember = null
+                                    selectedMembers = emptySet()
+                                    individualAmounts = emptyMap()
+                                    amount = ""
+                                    errorMessage = null
+                                }
+                            )
+                        }
+
+                        // Payment Form
+                        item {
+                            PaymentForm(
+                                splitMode = splitMode,
+                                selectedMember = selectedMember,
+                                amount = amount,
+                                description = description,
+                                allMembers = allMembers,
+                                selectedMembers = selectedMembers,
+                                individualAmounts = individualAmounts,
+                                includeCurrentUser = includeCurrentUser,
+                                onMemberClick = { showMemberSelection = true },
+                                onAmountChange = { amount = it },
+                                onDescriptionChange = { description = it },
+                                onMemberSelectionChange = { selectedMembers = it },
+                                onIndividualAmountChange = { individualAmounts = it },
+                                onIncludeCurrentUserChange = { includeCurrentUser = it },
+                                modifier = Modifier.scale(cardScale)
+                            )
+                        }
+
+                        // Messages
+                        errorMessage?.let { message ->
+                            item {
+                                MessageCard(
+                                    message = message,
+                                    isError = true,
+                                    onDismiss = { errorMessage = null }
+                                )
+                            }
+                        }
+
+                        successMessage?.let { message ->
+                            item {
+                                MessageCard(
+                                    message = message,
+                                    isError = false,
+                                    onDismiss = { successMessage = null }
+                                )
+                            }
+                        }
+
+                        // Submit Button
+                        item {
+                            SubmitButton(
+                                splitMode = splitMode,
+                                isProcessing = isProcessing,
+                                isEnabled = when (splitMode) {
+                                    "individual" -> selectedMember != null && amount.isNotBlank()
+                                    "equal" -> selectedMembers.isNotEmpty() && amount.isNotBlank()
+                                    "custom" -> selectedMembers.isNotEmpty() && individualAmounts.any {
+                                        selectedMembers.contains(it.key) && it.value.isNotBlank()
+                                    }
+                                    else -> false
+                                },
+                                onClick = { submitPayment() }
+                            )
                         }
                     }
                 }
             }
+        }
+
+        // Loading State
+        AnimatedVisibility(
+            visible = isLoading,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            LoadingScreen()
         }
     }
+
     // Member Selection Dialog
     if (showMemberSelection && allMembers.isNotEmpty()) {
-        AlertDialog(
-            onDismissRequest = { showMemberSelection = false },
-            title = {
-                Text(
-                    text = "Select Member to Pay",
-                    fontWeight = FontWeight.Bold
-                )
+        MemberSelectionDialog(
+            freeMembers = freeMembers.filter { it != currentUserName },
+            notFreeMembers = notFreeMembers.filter { it != currentUserName },
+            onMemberSelected = { member ->
+                selectedMember = member
+                showMemberSelection = false
+                errorMessage = null
             },
-            text = {
-                LazyColumn {
-                    // Show free members first
-                    if (freeMembers.isNotEmpty()) {
-                        item {
-                            Text(
-                                text = "Available Members",
-                                fontWeight = FontWeight.Medium,
-                                color = Color(0xFF4CAF50),
-                                modifier = Modifier.padding(vertical = 8.dp)
-                            )
-                        }
-                        items(freeMembers.filter { it != currentUserName }) { member ->
-                            MemberSelectionItem(
-                                member = member,
-                                isAvailable = true,
-                                onSelect = {
-                                    selectedMember = member
-                                    showMemberSelection = false
-                                    errorMessage = null
-                                }
-                            )
-                        }
-                    }
-
-                    // Show not free members
-                    if (notFreeMembers.isNotEmpty()) {
-                        item {
-                            Text(
-                                text = "Other Members",
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                                modifier = Modifier.padding(vertical = 8.dp)
-                            )
-                        }
-                        items(notFreeMembers.filter { it != currentUserName }) { member ->
-                            MemberSelectionItem(
-                                member = member,
-                                isAvailable = false,
-                                onSelect = {
-                                    selectedMember = member
-                                    showMemberSelection = false
-                                    errorMessage = null
-                                }
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = { showMemberSelection = false }
-                ) {
-                    Text("Cancel")
-                }
-            }
+            onDismiss = { showMemberSelection = false }
         )
     }
 }
 
 @Composable
-private fun MemberSelectionItem(
-    member: String,
-    isAvailable: Boolean,
-    onSelect: () -> Unit
-) {
-    TextButton(
-        onClick = onSelect,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
+private fun TripInfoCard(trip: Trip, memberCount: Int) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Start,
+            modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(32.dp)
-                    .clip(RoundedCornerShape(16.dp))
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = trip.trip_name.first().toString(),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            Column(modifier = Modifier.padding(start = 16.dp)) {
+                Text(
+                    text = trip.trip_name,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Text(
+                    text = "$memberCount members",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PaymentModeSelector(
+    selectedMode: String,
+    onModeChanged: (String) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            text = "Payment Mode",
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            val modes = listOf(
+                "individual" to "Individual",
+                "equal" to "Split Equal",
+                "custom" to "Custom"
+            )
+
+            modes.forEach { (mode, label) ->
+                FilterChip(
+                    onClick = { onModeChanged(mode) },
+                    label = {
+                        Text(
+                            label,
+                            fontSize = 13.sp,
+                            fontWeight = if (selectedMode == mode) FontWeight.Medium else FontWeight.Normal
+                        )
+                    },
+                    selected = selectedMode == mode,
+                    modifier = Modifier.weight(1f),
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PaymentForm(
+    splitMode: String,
+    selectedMember: String?,
+    amount: String,
+    description: String,
+    allMembers: List<String>,
+    selectedMembers: Set<String>,
+    individualAmounts: Map<String, String>,
+    includeCurrentUser: Boolean,
+    onMemberClick: () -> Unit,
+    onAmountChange: (String) -> Unit,
+    onDescriptionChange: (String) -> Unit,
+    onMemberSelectionChange: (Set<String>) -> Unit,
+    onIndividualAmountChange: (Map<String, String>) -> Unit,
+    onIncludeCurrentUserChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            when (splitMode) {
+                "individual" -> {
+                    OutlinedButton(
+                        onClick = onMemberClick,
+                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.primary
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(selectedMember ?: "Select member to pay")
+                            Icon(Icons.Default.Person, contentDescription = null)
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = amount,
+                        onValueChange = onAmountChange,
+                        label = { Text("Amount") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                        prefix = { Text("₹") },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary
+                        )
+                    )
+                }
+
+                "equal" -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Include myself in split")
+                        Switch(
+                            checked = includeCurrentUser,
+                            onCheckedChange = onIncludeCurrentUserChange
+                        )
+                    }
+
+                    // Member selection for equal split
+                    MemberSelectionList(
+                        members = allMembers,
+                        selectedMembers = selectedMembers,
+                        onSelectionChange = onMemberSelectionChange
+                    )
+
+                    OutlinedTextField(
+                        value = amount,
+                        onValueChange = onAmountChange,
+                        label = { Text("Total Amount") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                        prefix = { Text("₹") },
+                        supportingText = {
+                            if (selectedMembers.isNotEmpty() && amount.isNotBlank()) {
+                                val totalAmount = amount.toDoubleOrNull() ?: 0.0
+                                val totalPeople = selectedMembers.size + if (includeCurrentUser) 1 else 0
+                                if (totalPeople > 0) {
+                                    val perPerson = totalAmount / totalPeople
+                                    Text("₹${String.format("%.2f", perPerson)} per person")
+                                }
+                            }
+                        }
+                    )
+                }
+
+                "custom" -> {
+                    CustomSplitList(
+                        members = allMembers,
+                        selectedMembers = selectedMembers,
+                        individualAmounts = individualAmounts,
+                        onMemberSelectionChange = onMemberSelectionChange,
+                        onAmountChange = onIndividualAmountChange
+                    )
+                }
+            }
+
+            OutlinedTextField(
+                value = description,
+                onValueChange = onDescriptionChange,
+                label = { Text("Description (Optional)") },
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = 2
+            )
+        }
+    }
+}
+
+@Composable
+private fun MemberSelectionList(
+    members: List<String>,
+    selectedMembers: Set<String>,
+    onSelectionChange: (Set<String>) -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text("Select Members", fontWeight = FontWeight.Medium)
+            members.forEach { member ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = selectedMembers.contains(member),
+                        onCheckedChange = { isChecked ->
+                            onSelectionChange(
+                                if (isChecked) selectedMembers + member
+                                else selectedMembers - member
+                            )
+                        }
+                    )
+                    Text(member, modifier = Modifier.padding(start = 8.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CustomSplitList(
+    members: List<String>,
+    selectedMembers: Set<String>,
+    individualAmounts: Map<String, String>,
+    onMemberSelectionChange: (Set<String>) -> Unit,
+    onAmountChange: (Map<String, String>) -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text("Custom Split", fontWeight = FontWeight.Medium)
+
+            members.forEach { member ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = selectedMembers.contains(member),
+                        onCheckedChange = { isChecked ->
+                            onMemberSelectionChange(
+                                if (isChecked) selectedMembers + member
+                                else selectedMembers - member
+                            )
+                            if (!isChecked) {
+                                onAmountChange(individualAmounts - member)
+                            }
+                        }
+                    )
+
+                    Text(
+                        member,
+                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                    )
+
+                    if (selectedMembers.contains(member)) {
+                        OutlinedTextField(
+                            value = individualAmounts[member] ?: "",
+                            onValueChange = { value ->
+                                onAmountChange(individualAmounts + (member to value))
+                            },
+                            label = { Text("₹") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                    } else {
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageCard(
+    message: String,
+    isError: Boolean,
+    onDismiss: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = if (isError)
+                MaterialTheme.colorScheme.errorContainer
+            else
+                Color(0xFF4CAF50).copy(alpha = 0.1f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = if (isError) Icons.Default.Warning else Icons.Default.Check,
+                contentDescription = null,
+                tint = if (isError)
+                    MaterialTheme.colorScheme.onErrorContainer
+                else
+                    Color(0xFF4CAF50)
+            )
+            Text(
+                text = message,
+                modifier = Modifier.padding(start = 12.dp).weight(1f),
+                color = if (isError)
+                    MaterialTheme.colorScheme.onErrorContainer
+                else
+                    Color(0xFF4CAF50)
+            )
+        }
+    }
+}
+
+@Composable
+private fun SubmitButton(
+    splitMode: String,
+    isProcessing: Boolean,
+    isEnabled: Boolean,
+    onClick: () -> Unit
+) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().height(56.dp),
+        enabled = isEnabled && !isProcessing,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primary
+        )
+    ) {
+        if (isProcessing) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                color = MaterialTheme.colorScheme.onPrimary
+            )
+        } else {
+            Text(
+                text = when (splitMode) {
+                    "individual" -> "Make Payment"
+                    "equal" -> "Split Payment"
+                    "custom" -> "Send Payments"
+                    else -> "Pay"
+                },
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
+    }
+}
+
+@Composable
+private fun ErrorCard(
+    message: String,
+    onRetry: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                Icons.Default.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.size(48.dp)
+            )
+            Text(
+                "Something went wrong",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+            Text(
+                message,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+            )
+            Button(
+                onClick = onRetry,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error
+                )
+            ) {
+                Text("Retry")
+            }
+        }
+    }
+}
+
+@Composable
+private fun MemberSelectionDialog(
+    freeMembers: List<String>,
+    notFreeMembers: List<String>,
+    onMemberSelected: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Select Member", fontWeight = FontWeight.SemiBold) },
+        text = {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (freeMembers.isNotEmpty()) {
+                    item {
+                        Text(
+                            "Available",
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF4CAF50),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    }
+                    items(freeMembers) { member ->
+                        MemberItem(member, true) { onMemberSelected(member) }
+                    }
+                }
+                if (notFreeMembers.isNotEmpty()) {
+                    item {
+                        Text(
+                            "Other Members",
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    }
+                    items(notFreeMembers) { member ->
+                        MemberItem(member, false) { onMemberSelected(member) }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+private fun MemberItem(
+    member: String,
+    isAvailable: Boolean,
+    onSelect: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onSelect,
+        colors = CardDefaults.cardColors(
+            containerColor = if (isAvailable)
+                Color(0xFF4CAF50).copy(alpha = 0.1f)
+            else
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
                     .background(
                         if (isAvailable)
-                            Color(0xFF4CAF50).copy(alpha = 0.1f)
+                            Color(0xFF4CAF50).copy(alpha = 0.2f)
                         else
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
                     ),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = member.first().toString(),
+                    text = member.first().toString().uppercase(),
                     color = if (isAvailable) Color(0xFF4CAF50) else MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
                 )
             }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column {
+
+            Column(modifier = Modifier.padding(start = 16.dp)) {
                 Text(
                     text = member,
                     fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 if (!isAvailable) {
@@ -859,6 +981,33 @@ private fun MemberSelectionItem(
                     )
                 }
             }
+        }
+    }
+}
+@Composable
+public fun LoadingScreen() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(48.dp),
+                color = MaterialTheme.colorScheme.primary,
+                strokeWidth = 4.dp
+            )
+
+            Text(
+                text = "Loading payment details...",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+            )
         }
     }
 }

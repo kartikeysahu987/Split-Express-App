@@ -45,6 +45,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+
 @Composable
 fun AppNavHost(
     navController: NavHostController,

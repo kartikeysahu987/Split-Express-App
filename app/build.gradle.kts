@@ -40,6 +40,11 @@ android {
 }
 
 dependencies {
+    implementation ("androidx.compose.material:material-icons-extended:1.7.8")
+    //permission
+
+    implementation ("com.google.accompanist:accompanist-permissions:0.32.0")
+
     // Networking
     implementation("com.squareup.retrofit2:retrofit:2.9.0")
     implementation("com.squareup.retrofit2:converter-gson:2.9.0")

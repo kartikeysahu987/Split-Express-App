@@ -1,21 +1,19 @@
 package com.example.splitexpress.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.util.Log
+import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.ShoppingCart
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.AccountBox
-//import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,23 +32,17 @@ import com.example.splitexpress.utils.TokenManager
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
-import androidx.compose.foundation.clickable
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
-import android.widget.Toast
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TripDetailScreen(
-    navController: NavController,
-    tripId: String
-) {
+fun TripDetailScreen(navController: NavController, tripId: String) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
+    val scope = rememberCoroutineScope()
 
+    // State management
     var transactions by remember { mutableStateOf<List<Transaction>>(emptyList()) }
     var settlements by remember { mutableStateOf<List<Settlement>>(emptyList()) }
+    var members by remember { mutableStateOf<MembersResponse?>(null) }
     var currentUserName by remember { mutableStateOf<String?>(null) }
     var inviteCode by remember { mutableStateOf<String?>(null) }
     var tripName by remember { mutableStateOf<String?>(null) }
@@ -60,233 +52,121 @@ fun TripDetailScreen(
     var isSettling by remember { mutableStateOf<String?>(null) }
     var isRefreshing by remember { mutableStateOf(false) }
 
-    // Function to fetch trip details including invite code
-    suspend fun fetchTripDetails(token: String) {
+    // Data loading functions
+    suspend fun loadTripData(token: String) {
         try {
-            Log.d("TripDetailScreen", "Fetching trip details for tripId: $tripId")
-
-            // Try getAllMyTrips first
             val myTripsResponse = RetrofitInstance.api.getAllMyTrips(token = token)
             if (myTripsResponse.isSuccessful) {
-                val trips = myTripsResponse.body()?.user_items ?: emptyList()
-                Log.d("TripDetailScreen", "Found ${trips.size} trips in getAllMyTrips")
-
-                val currentTrip = trips.find { trip ->
-                    trip.trip_id == tripId || trip._id == tripId
+                val currentTrip = myTripsResponse.body()?.user_items?.find {
+                    it.trip_id == tripId || it._id == tripId
                 }
-
-                if (currentTrip != null) {
-                    inviteCode = currentTrip.invite_code
-                    tripName = currentTrip.trip_name
-                    Log.d("TripDetailScreen", "Found trip in getAllMyTrips - Invite code: $inviteCode, Name: $tripName")
-                } else {
-                    Log.d("TripDetailScreen", "Trip not found in getAllMyTrips, trying getAllTrips")
-
-                    // If not found in my trips, try all trips
-                    val allTripsResponse = RetrofitInstance.api.getAllTrips(token = token)
-                    if (allTripsResponse.isSuccessful) {
-                        val allTrips = allTripsResponse.body()?.user_items ?: emptyList()
-                        Log.d("TripDetailScreen", "Found ${allTrips.size} trips in getAllTrips")
-
-                        val foundTrip = allTrips.find { trip ->
-                            trip.trip_id == tripId || trip._id == tripId
-                        }
-
-                        if (foundTrip != null) {
-                            inviteCode = foundTrip.invite_code
-                            tripName = foundTrip.trip_name
-                            Log.d("TripDetailScreen", "Found trip in getAllTrips - Invite code: $inviteCode, Name: $tripName")
-                        } else {
-                            Log.e("TripDetailScreen", "Trip not found in any API call")
-                        }
-                    } else {
-                        Log.e("TripDetailScreen", "getAllTrips failed: ${allTripsResponse.code()}")
-                    }
+                currentTrip?.let {
+                    inviteCode = it.invite_code
+                    tripName = it.trip_name
                 }
-            } else {
-                Log.e("TripDetailScreen", "getAllMyTrips failed: ${myTripsResponse.code()}")
             }
         } catch (e: Exception) {
-            Log.e("TripDetailScreen", "Exception fetching trip details", e)
+            Log.e("TripDetailScreen", "Error loading trip data", e)
         }
     }
 
-    // Function to refresh data
+    suspend fun loadMembers(token: String, code: String) {
+        try {
+            val response = RetrofitInstance.api.getMembers(
+                token = token,
+                request = GetMembersRequest(invite_code = code)
+            )
+            if (response.isSuccessful) {
+                members = response.body()
+            }
+        } catch (e: Exception) {
+            Log.e("TripDetailScreen", "Error loading members", e)
+        }
+    }
+
     fun refreshData() {
-        coroutineScope.launch {
+        scope.launch {
             isRefreshing = true
             try {
-                val token = TokenManager.getToken(context)
-                if (token.isNullOrBlank()) {
-                    errorMessage = "No token found"
-                    return@launch
-                }
+                val token = TokenManager.getToken(context) ?: return@launch
 
-                // Refresh trip details including invite code
-                fetchTripDetails(token)
+                loadTripData(token)
+                inviteCode?.let { loadMembers(token, it) }
 
-                // Fetch transactions
+                // Load transactions
                 val transactionsResponse = RetrofitInstance.api.getAllTransactions(
                     token = token,
                     request = GetTransactionsRequest(trip_id = tripId)
                 )
-
                 if (transactionsResponse.isSuccessful) {
-                    val transactionsBody = transactionsResponse.body()
-                    val fetchedTransactions = transactionsBody?.transactions ?: emptyList()
-
-                    // Sort transactions by date - newest first
-                    transactions = fetchedTransactions.sortedByDescending { transaction ->
-                        try {
-                            val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
-                            dateFormat.parse(transaction.created_at)?.time ?: 0L
-                        } catch (e: Exception) {
-                            Log.e("TripDetailScreen", "Error parsing date: ${transaction.created_at}", e)
-                            0L
-                        }
-                    }
-
-                    Log.d("TripDetailScreen", "Loaded and sorted ${transactions.size} transactions")
+                    transactions = transactionsResponse.body()?.transactions?.sortedByDescending {
+                        parseDate(it.created_at)
+                    } ?: emptyList()
                 }
 
-                // Fetch settlements
+                // Load settlements
                 val settlementsResponse = RetrofitInstance.api.getSettlements(
                     token = token,
                     request = GetSettlementsRequest(trip_id = tripId)
                 )
-
                 if (settlementsResponse.isSuccessful) {
-                    val settlementsBody = settlementsResponse.body()
-                    settlements = settlementsBody?.settlements ?: emptyList()
-                    Log.d("TripDetailScreen", "Loaded ${settlements.size} settlements")
+                    settlements = settlementsResponse.body()?.settlements ?: emptyList()
                 }
 
-                // Clear any previous error message on successful refresh
                 errorMessage = null
-
             } catch (e: Exception) {
-                Log.e("TripDetailScreen", "Exception during refresh", e)
-                errorMessage = "Failed to refresh data: ${e.message}"
+                errorMessage = "Failed to refresh: ${e.message}"
             } finally {
                 isRefreshing = false
             }
         }
     }
 
-    // Refresh settlements when switching to settlements tab
-    LaunchedEffect(selectedTab) {
-        if (selectedTab == 1) { // Settlements tab
-            refreshData()
-        }
-    }
-
+    // Initial data load
     LaunchedEffect(tripId) {
-        Log.d("TripDetailScreen", "Starting to fetch data for trip: $tripId")
+        val token = TokenManager.getToken(context)
+        if (token.isNullOrBlank()) {
+            errorMessage = "No token found"
+            isLoading = false
+            return@LaunchedEffect
+        }
 
         try {
-            val token = TokenManager.getToken(context)
-            Log.d("TripDetailScreen", "Token: ${if (token.isNullOrBlank()) "NULL/BLANK" else "EXISTS"}")
+            loadTripData(token)
 
-            if (token.isNullOrBlank()) {
-                errorMessage = "No token found"
-                isLoading = false
-                return@LaunchedEffect
-            }
-
-            Log.d("TripDetailScreen", "Making API calls with trip_id: $tripId")
-
-            // Fetch trip details including invite code
-            fetchTripDetails(token)
-
-            // Get current user's casual name
+            // Get current user name
             val casualNameResponse = RetrofitInstance.api.getCasualNameByUID(
                 token = token,
                 request = GetCasualNameRequest(trip_id = tripId)
             )
-
             if (casualNameResponse.isSuccessful) {
                 currentUserName = casualNameResponse.body()?.casual_name
-                Log.d("TripDetailScreen", "Current user name: $currentUserName")
-            } else {
-                Log.e("TripDetailScreen", "Failed to get casual name: ${casualNameResponse.code()}")
             }
 
-            // Fetch transactions
-            val transactionsResponse = RetrofitInstance.api.getAllTransactions(
-                token = token,
-                request = GetTransactionsRequest(trip_id = tripId)
-            )
-
-            Log.d("TripDetailScreen", "Transactions response code: ${transactionsResponse.code()}")
-
-            if (transactionsResponse.isSuccessful) {
-                val transactionsBody = transactionsResponse.body()
-                val fetchedTransactions = transactionsBody?.transactions ?: emptyList()
-
-                // Sort transactions by date - newest first
-                transactions = fetchedTransactions.sortedByDescending { transaction ->
-                    try {
-                        val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
-                        dateFormat.parse(transaction.created_at)?.time ?: 0L
-                    } catch (e: Exception) {
-                        Log.e("TripDetailScreen", "Error parsing date: ${transaction.created_at}", e)
-                        0L
-                    }
-                }
-
-                Log.d("TripDetailScreen", "Loaded and sorted ${transactions.size} transactions")
-            } else {
-                Log.e("TripDetailScreen", "Transactions API Error: ${transactionsResponse.code()} - ${transactionsResponse.message()}")
-            }
-
-            // Fetch settlements
-            val settlementsResponse = RetrofitInstance.api.getSettlements(
-                token = token,
-                request = GetSettlementsRequest(trip_id = tripId)
-            )
-
-            Log.d("TripDetailScreen", "Settlements response code: ${settlementsResponse.code()}")
-
-            if (settlementsResponse.isSuccessful) {
-                val settlementsBody = settlementsResponse.body()
-                settlements = settlementsBody?.settlements ?: emptyList()
-                Log.d("TripDetailScreen", "Loaded ${settlements.size} settlements")
-            } else {
-                Log.e("TripDetailScreen", "Settlements API Error: ${settlementsResponse.code()} - ${settlementsResponse.message()}")
-            }
-
-            // Show error only if both requests failed
-            if (!transactionsResponse.isSuccessful && !settlementsResponse.isSuccessful) {
-                errorMessage = "Failed to load data: ${transactionsResponse.code()}"
-            }
-
+            refreshData()
         } catch (e: Exception) {
-            errorMessage = "Exception: ${e.message}"
-            Log.e("TripDetailScreen", "Exception occurred", e)
+            errorMessage = "Error: ${e.message}"
         } finally {
             isLoading = false
         }
     }
 
+    // Refresh on tab change
+    LaunchedEffect(selectedTab) {
+        if (selectedTab == 1 || selectedTab == 2) refreshData()
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    Text(
-                        tripName ?: "Trip Details",
-                        fontWeight = FontWeight.Bold
-                    )
-                },
+                title = { Text(tripName ?: "Trip Details", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.Default.ArrowBack, "Back")
                     }
                 },
                 actions = {
-                    IconButton(
-                        onClick = { refreshData() },
-                        enabled = !isRefreshing
-                    ) {
+                    IconButton(onClick = { refreshData() }, enabled = !isRefreshing) {
                         if (isRefreshing) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(20.dp),
@@ -294,11 +174,7 @@ fun TripDetailScreen(
                                 strokeWidth = 2.dp
                             )
                         } else {
-                            Icon(
-                                Icons.Default.Refresh,
-                                contentDescription = "Refresh",
-                                tint = Color.White
-                            )
+                            Icon(Icons.Default.Refresh, "Refresh", tint = Color.White)
                         }
                     }
                 },
@@ -311,16 +187,10 @@ fun TripDetailScreen(
         },
         floatingActionButton = {
             FloatingActionButton(
-                onClick = {
-                    navController.navigate("payScreen/$tripId")
-                },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = Color.White
+                onClick = { navController.navigate("payScreen/$tripId") },
+                containerColor = MaterialTheme.colorScheme.primary
             ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Make Payment"
-                )
+                Icon(Icons.Default.Add, "Add Payment", tint = Color.White)
             }
         }
     ) { paddingValues ->
@@ -331,243 +201,71 @@ fun TripDetailScreen(
                 .padding(16.dp)
         ) {
             // Invite Code Card
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 16.dp)
-                    .clickable {
-                        inviteCode?.let { code ->
-                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            val clip = ClipData.newPlainText("Invite Code", code)
-                            clipboard.setPrimaryClip(clip)
-                            Toast.makeText(context, "Invite code copied to clipboard!", Toast.LENGTH_SHORT).show()
-                        } ?: run {
-                            Toast.makeText(context, "Invite code not available", Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                ),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Invite Code",
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                            fontWeight = FontWeight.Medium
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        if (inviteCode != null) {
-                            Text(
-                                text = inviteCode!!,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                text = "Tap to copy",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                            )
-                        } else {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    color = MaterialTheme.colorScheme.primary,
-                                    strokeWidth = 2.dp
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "Loading...",
-                                    fontSize = 16.sp,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                                )
-                            }
-                        }
-                    }
-
-                    Icon(
-                        imageVector = Icons.Default.Info,
-                        contentDescription = "Copy invite code",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
-                    )
+            InviteCodeCard(
+                inviteCode = inviteCode,
+                onCopyClick = { code ->
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Invite Code", code))
+                    Toast.makeText(context, "Copied to clipboard!", Toast.LENGTH_SHORT).show()
                 }
-            }
-
-            // Debug information (remove in production)
-            if (isLoading) {
-                Text(
-                    text = "Debug: tripId = $tripId",
-                    fontSize = 12.sp,
-                    color = Color.Gray,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-            }
+            )
 
             when {
-                isLoading -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator()
-                            Text(
-                                text = "Loading data...",
-                                modifier = Modifier.padding(top = 8.dp)
-                            )
-                        }
-                    }
-                }
-
-                errorMessage != null -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "Error: $errorMessage",
-                                color = MaterialTheme.colorScheme.error,
-                                fontSize = 16.sp
-                            )
-                            Button(
-                                onClick = {
-                                    isLoading = true
-                                    errorMessage = null
-                                    refreshData()
-                                },
-                                modifier = Modifier.padding(top = 16.dp)
-                            ) {
-                                Text("Retry")
-                            }
-                        }
-                    }
-                }
-
+                isLoading -> LoadingScreen()
+                errorMessage != null -> ErrorScreen(errorMessage!!) { refreshData() }
                 else -> {
-                    // Tab Row for switching between Transactions and Settlements
-                    TabRow(
-                        selectedTabIndex = selectedTab,
-                        modifier = Modifier.padding(bottom = 16.dp)
-                    ) {
-                        Tab(
-                            selected = selectedTab == 0,
-                            onClick = { selectedTab = 0 },
-                            text = { Text("Transactions (${transactions.size})") }
-                        )
-                        Tab(
-                            selected = selectedTab == 1,
-                            onClick = { selectedTab = 1 },
-                            text = { Text("Settlements (${settlements.size})") }
-                        )
+                    // Tab Navigation
+                    TabRow(selectedTabIndex = selectedTab) {
+                        Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }) {
+                            Text("Transactions (${transactions.size})", modifier = Modifier.padding(16.dp))
+                        }
+                        Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }) {
+                            Text("Settlements (${settlements.size})", modifier = Modifier.padding(16.dp))
+                        }
+                        Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }) {
+                            Text("Members (${members?.total_members ?: "?"})", modifier = Modifier.padding(16.dp))
+                        }
                     }
+
+                    Spacer(modifier = Modifier.height(16.dp))
 
                     // Content based on selected tab
                     when (selectedTab) {
-                        0 -> {
-                            // Transactions Tab
-                            if (transactions.isEmpty()) {
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "No transactions found for this trip",
-                                        fontSize = 16.sp,
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                                    )
-                                }
-                            } else {
-                                LazyColumn(
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    items(transactions) { transaction ->
-                                        TransactionCard(
-                                            transaction = transaction,
-                                            currentUserName = currentUserName
+                        0 -> TransactionsContent(transactions, currentUserName)
+                        1 -> SettlementsContent(settlements, currentUserName, isSettling) { settlement ->
+                            val canSettle = settlement.from.equals(currentUserName, ignoreCase = true)
+                            if (canSettle) {
+                                val settlementKey = "${settlement.from}-${settlement.to}-${settlement.amount}"
+                                isSettling = settlementKey
+
+                                scope.launch {
+                                    try {
+                                        val token = TokenManager.getToken(context) ?: return@launch
+                                        val response = RetrofitInstance.api.settle(
+                                            token = token,
+                                            request = SettleRequest(
+                                                trip_id = tripId,
+                                                payer_name = settlement.to,
+                                                reciever_name = settlement.from,
+                                                amount = settlement.amount,
+                                                description = "Settlement payment"
+                                            )
                                         )
+
+                                        if (response.isSuccessful) {
+                                            refreshData()
+                                        } else {
+                                            errorMessage = "Settlement failed"
+                                        }
+                                    } catch (e: Exception) {
+                                        errorMessage = "Settlement error: ${e.message}"
+                                    } finally {
+                                        isSettling = null
                                     }
                                 }
                             }
                         }
-                        1 -> {
-                            // Settlements Tab
-                            if (settlements.isEmpty()) {
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "No settlements found for this trip",
-                                        fontSize = 16.sp,
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                                    )
-                                }
-                            } else {
-                                LazyColumn(
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    items(settlements) { settlement ->
-                                        SettlementCard(
-                                            settlement = settlement,
-                                            currentUserName = currentUserName,
-                                            isSettling = isSettling == "${settlement.from}-${settlement.to}-${settlement.amount}",
-                                            onSettleClick = {
-                                                val settlementKey = "${settlement.from}-${settlement.to}-${settlement.amount}"
-                                                isSettling = settlementKey
-
-                                                coroutineScope.launch {
-                                                    try {
-                                                        val token = TokenManager.getToken(context)
-                                                        if (token != null) {
-                                                            val settleRequest = SettleRequest(
-                                                                trip_id = tripId,
-                                                                payer_name = settlement.to,
-                                                                reciever_name = settlement.from,
-                                                                amount = settlement.amount,
-                                                                description = "Settlement payment"
-                                                            )
-
-                                                            val response = RetrofitInstance.api.settle(
-                                                                token = token,
-                                                                request = settleRequest
-                                                            )
-
-                                                            if (response.isSuccessful) {
-                                                                Log.d("TripDetailScreen", "Settlement successful")
-                                                                // Refresh data to show updated transactions and settlements
-                                                                refreshData()
-                                                            } else {
-                                                                Log.e("TripDetailScreen", "Settlement failed: ${response.code()}")
-                                                                errorMessage = "Settlement failed. Please try again."
-                                                            }
-                                                        }
-                                                    } catch (e: Exception) {
-                                                        Log.e("TripDetailScreen", "Settlement exception", e)
-                                                        errorMessage = "Settlement error: ${e.message}"
-                                                    } finally {
-                                                        isSettling = null
-                                                    }
-                                                }
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                        2 -> MembersContent(members)
                     }
                 }
             }
@@ -576,67 +274,229 @@ fun TripDetailScreen(
 }
 
 @Composable
-fun TransactionCard(
-    transaction: Transaction,
-    currentUserName: String?
-) {
-    // Determine involvement and calculate amounts
-    val involvement = getTransactionInvolvement(transaction, currentUserName)
-    val isSettlement = transaction.type.equals("settle", ignoreCase = true)
-
+fun InviteCodeCard(inviteCode: String?, onCopyClick: (String) -> Unit) {
     Card(
         modifier = Modifier
-            .fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+            .fillMaxWidth()
+            .padding(bottom = 16.dp)
+            .clickable { inviteCode?.let(onCopyClick) },
         colors = CardDefaults.cardColors(
-            containerColor = if (isSettlement)
-                MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
-            else
-                MaterialTheme.colorScheme.surface
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        shape = RoundedCornerShape(12.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Invite Code", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                Spacer(modifier = Modifier.height(4.dp))
+
+                if (inviteCode != null) {
+                    Text(inviteCode, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Text("Tap to copy", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Loading...", fontSize = 16.sp)
+                    }
+                }
+            }
+            Icon(Icons.Default.ContentCopy, "Copy", tint = MaterialTheme.colorScheme.primary)
+        }
+    }
+}
+
+//@Composable
+//fun LoadingScreen() {
+//    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+//        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+//            CircularProgressIndicator()
+//            Text("Loading data...", modifier = Modifier.padding(top = 8.dp))
+//        }
+//    }
+//}
+
+@Composable
+fun ErrorScreen(message: String, onRetry: () -> Unit) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(message, color = MaterialTheme.colorScheme.error, fontSize = 16.sp)
+            Button(onClick = onRetry, modifier = Modifier.padding(top = 16.dp)) {
+                Text("Retry")
+            }
+        }
+    }
+}
+
+@Composable
+fun TransactionsContent(transactions: List<Transaction>, currentUserName: String?) {
+    if (transactions.isEmpty()) {
+        EmptyState("No transactions found")
+    } else {
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(transactions) { transaction ->
+                TransactionCard(transaction, currentUserName)
+            }
+        }
+    }
+}
+
+@Composable
+fun SettlementsContent(
+    settlements: List<Settlement>,
+    currentUserName: String?,
+    isSettling: String?,
+    onSettleClick: (Settlement) -> Unit
+) {
+    if (settlements.isEmpty()) {
+        EmptyState("No settlements required")
+    } else {
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(settlements) { settlement ->
+                SettlementCard(settlement, currentUserName, isSettling, onSettleClick)
+            }
+        }
+    }
+}
+
+@Composable
+fun MembersContent(members: MembersResponse?) {
+    members?.let { membersData ->
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Summary Card
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("Trip Summary", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            StatItem("Total", "${membersData.total_members}", Color.Gray)
+                            StatItem("Joined", "${membersData.total_not_free}", Color(0xFF4CAF50))
+                            StatItem("Pending", "${membersData.total_free}", Color(0xFFFF9800))
+                        }
+                    }
+                }
+            }
+
+            // Joined Members
+            if (!membersData.not_free_members.isNullOrEmpty()) {
+                item {
+                    Text("Joined Members", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4CAF50))
+                }
+                items(membersData.not_free_members) { member ->
+                    MemberCard(member, true)
+                }
+            }
+
+            // Pending Members
+            if (!membersData.free_members.isNullOrEmpty()) {
+                item {
+                    Text("Pending Members", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF9800))
+                }
+                items(membersData.free_members) { member ->
+                    MemberCard(member, false)
+                }
+            }
+        }
+    } ?: LoadingScreen()
+}
+
+@Composable
+fun StatItem(label: String, value: String, color: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, fontSize = 14.sp, color = color)
+        Text(value, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = color)
+    }
+}
+
+@Composable
+fun MemberCard(memberName: String, hasJoined: Boolean) {
+    val color = if (hasJoined) Color(0xFF4CAF50) else Color(0xFFFF9800)
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.1f))
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Person, null, tint = color)
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(memberName, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (hasJoined) Icons.Default.CheckCircle else Icons.Default.Schedule,
+                    null,
+                    tint = color,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    if (hasJoined) "Joined" else "Pending",
+                    fontSize = 12.sp,
+                    color = color,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun TransactionCard(transaction: Transaction, currentUserName: String?) {
+    val involvement = getTransactionInvolvement(transaction, currentUserName)
+    val isSettlement = transaction.type.equals("settle", ignoreCase = true)
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSettlement)
+                MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
+            else MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Left side - Date and Icon
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.width(60.dp)
-            ) {
-                // Date
+            // Date and Icon
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(60.dp)) {
                 Text(
-                    text = formatTransactionDate(transaction.created_at),
+                    formatDate(transaction.created_at),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     textAlign = TextAlign.Center
                 )
-
                 Spacer(modifier = Modifier.height(4.dp))
 
-                // Category Icon
                 Box(
                     modifier = Modifier
                         .size(40.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(
-                            if (isSettlement)
-                                MaterialTheme.colorScheme.tertiary
-                            else
-                                getCategoryColor(transaction.description ?: "")
-                        )
+                        .background(getCategoryColor(transaction.description ?: ""))
                         .padding(8.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (isSettlement)
-                            Icons.Default.AccountBox
-                        else
-                            getCategoryIcon(transaction.description ?: ""),
-                        contentDescription = null,
+                        getCategoryIcon(transaction.description ?: ""),
+                        null,
                         tint = Color.White,
                         modifier = Modifier.size(24.dp)
                     )
@@ -645,85 +505,36 @@ fun TransactionCard(
 
             Spacer(modifier = Modifier.width(16.dp))
 
-            // Middle - Transaction Details
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
-                // Description/Title
+            // Details
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (isSettlement) {
-                        "Settlement"
-                    } else {
-                        transaction.description?.takeIf { it.isNotBlank() } ?: "Transaction"
-                    },
+                    if (isSettlement) "Settlement" else (transaction.description ?: "Transaction"),
                     fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface
+                    fontWeight = FontWeight.Medium
                 )
-
-                Spacer(modifier = Modifier.height(2.dp))
-
-                // Payer info or involvement status
                 Text(
-                    text = if (isSettlement) {
+                    if (isSettlement)
                         "${transaction.payer_name} settled with ${transaction.reciever_name}"
-                    } else {
-                        when (involvement.status) {
-                            TransactionStatus.YOU_PAID -> "You paid ₹${transaction.amount}"
-                            TransactionStatus.YOU_BORROWED -> "${transaction.payer_name} paid ₹${transaction.amount}"
-                            TransactionStatus.NOT_INVOLVED -> "You are not involved"
-                        }
-                    },
+                    else involvement.statusText,
                     fontSize = 14.sp,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )
             }
 
-            // Right side - Status and Amount
-            Column(
-                horizontalAlignment = Alignment.End
-            ) {
-                if (isSettlement) {
-                    Text(
-                        text = "settled",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.tertiary,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "₹${transaction.amount}",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.tertiary
-                    )
-                } else {
-                    // Status text
-                    Text(
-                        text = involvement.statusText,
-                        fontSize = 12.sp,
-                        color = involvement.statusColor,
-                        fontWeight = FontWeight.Medium
-                    )
-
-                    Spacer(modifier = Modifier.height(2.dp))
-
-                    // Amount (only show if involved)
-                    if (involvement.status != TransactionStatus.NOT_INVOLVED) {
-                        Text(
-                            text = "₹${involvement.displayAmount}",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = involvement.amountColor
-                        )
-                    } else {
-                        Text(
-                            text = "not involved",
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                        )
-                    }
-                }
+            // Amount
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    if (isSettlement) "settled" else involvement.statusText,
+                    fontSize = 12.sp,
+                    color = involvement.statusColor,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    "₹${transaction.amount}",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = involvement.amountColor
+                )
             }
         }
     }
@@ -733,50 +544,38 @@ fun TransactionCard(
 fun SettlementCard(
     settlement: Settlement,
     currentUserName: String?,
-    isSettling: Boolean,
-    onSettleClick: () -> Unit
+    isSettling: String?,
+    onSettleClick: (Settlement) -> Unit
 ) {
     val canSettle = settlement.from.equals(currentUserName, ignoreCase = true)
     val isCurrentUserInvolved = settlement.from.equals(currentUserName, ignoreCase = true) ||
             settlement.to.equals(currentUserName, ignoreCase = true)
+    val settlementKey = "${settlement.from}-${settlement.to}-${settlement.amount}"
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
             containerColor = when {
-                canSettle -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f) // You owe
-                isCurrentUserInvolved -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f) // You're owed
-                else -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f) // Not involved
+                canSettle -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                isCurrentUserInvolved -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                else -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
             }
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        )
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-        ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Settlement icon
                 Box(
                     modifier = Modifier
                         .size(40.dp)
                         .clip(CircleShape)
-                        .background(
-                            when {
-                                canSettle -> MaterialTheme.colorScheme.error
-                                isCurrentUserInvolved -> MaterialTheme.colorScheme.primary
-                                else -> MaterialTheme.colorScheme.secondary
-                            }
-                        ),
+                        .background(if (canSettle) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = if (canSettle) "↑" else if (isCurrentUserInvolved) "↓" else "↔",
+                        if (canSettle) "↑" else "↓",
                         color = Color.White,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
@@ -785,260 +584,126 @@ fun SettlementCard(
 
                 Spacer(modifier = Modifier.width(16.dp))
 
-                // Settlement details
-                Column(
-                    modifier = Modifier.weight(1f)
-                ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = when {
+                        when {
                             canSettle -> "You owe"
                             isCurrentUserInvolved -> "You are owed"
                             else -> "Settlement Required"
                         },
                         fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = when {
-                            canSettle -> MaterialTheme.colorScheme.error
-                            isCurrentUserInvolved -> MaterialTheme.colorScheme.primary
-                            else -> MaterialTheme.colorScheme.onSurface
-                        }
+                        fontWeight = FontWeight.Medium
                     )
-                    Text(
-                        text = "${settlement.from} → ${settlement.to}",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                    )
+                    Text("${settlement.from} → ${settlement.to}", fontSize = 14.sp)
                 }
 
-                // Amount
                 Text(
-                    text = "₹${settlement.amount}",
+                    "₹${settlement.amount}",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    color = when {
-                        canSettle -> MaterialTheme.colorScheme.error
-                        isCurrentUserInvolved -> MaterialTheme.colorScheme.primary
-                        else -> MaterialTheme.colorScheme.onSurface
-                    }
+                    color = if (canSettle) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                 )
             }
 
-            // Settle button (show for all settlements, but only enable if current user can settle)
             Spacer(modifier = Modifier.height(12.dp))
+
             Button(
-                onClick = onSettleClick,
-                enabled = canSettle && !isSettling,
+                onClick = { onSettleClick(settlement) },
+                enabled = canSettle && isSettling != settlementKey,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (canSettle)
-                        MaterialTheme.colorScheme.error
-                    else
-                        MaterialTheme.colorScheme.secondary,
-                    disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                    containerColor = if (canSettle) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary
                 )
             ) {
-                when {
-                    isSettling -> {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                color = Color.White,
-                                strokeWidth = 2.dp
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Settling...")
+                if (isSettling == settlementKey) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Settling...")
+                } else {
+                    Text(
+                        when {
+                            canSettle -> "Settle Payment"
+                            isCurrentUserInvolved -> "Waiting for ${settlement.from}"
+                            else -> "Not your settlement"
                         }
-                    }
-                    canSettle -> {
-                        Text("Settle Payment")
-                    }
-                    isCurrentUserInvolved -> {
-                        Text("Waiting for ${settlement.from}")
-                    }
-                    else -> {
-                        Text("Not your settlement")
-                    }
+                    )
                 }
             }
         }
     }
 }
 
-// Data classes for transaction involvement
-enum class TransactionStatus {
-    YOU_PAID,
-    YOU_BORROWED,
-    NOT_INVOLVED
+@Composable
+fun EmptyState(message: String) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(message, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+    }
 }
 
+// Helper Functions
 data class TransactionInvolvement(
-    val status: TransactionStatus,
     val statusText: String,
     val statusColor: Color,
-    val displayAmount: String,
     val amountColor: Color
 )
 
-// Helper functions
 @Composable
-fun getTransactionInvolvement(
-    transaction: Transaction,
-    currentUserName: String?
-): TransactionInvolvement {
+fun getTransactionInvolvement(transaction: Transaction, currentUserName: String?): TransactionInvolvement {
     return when {
-        // User is the payer
-        transaction.payer_name.equals(currentUserName, ignoreCase = true) -> {
-            TransactionInvolvement(
-                status = TransactionStatus.YOU_PAID,
-                statusText = "you lent",
-                statusColor = Color(0xFF4CAF50), // Green
-                displayAmount = transaction.amount,
-                amountColor = Color(0xFF4CAF50)
-            )
-        }
-
-        // User is the receiver
-        transaction.reciever_name.equals(currentUserName, ignoreCase = true) -> {
-            TransactionInvolvement(
-                status = TransactionStatus.YOU_BORROWED,
-                statusText = "you borrowed",
-                statusColor = Color(0xFFFF8A50), // Orange
-                displayAmount = transaction.amount,
-                amountColor = Color(0xFFFF8A50)
-            )
-        }
-
-        // User is not involved
-        else -> {
-            TransactionInvolvement(
-                status = TransactionStatus.NOT_INVOLVED,
-                statusText = "not involved",
-                statusColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                displayAmount = "0.00",
-                amountColor = Color.Gray
-            )
-        }
+        transaction.payer_name.equals(currentUserName, ignoreCase = true) -> TransactionInvolvement(
+            "you lent", Color(0xFF4CAF50), Color(0xFF4CAF50)
+        )
+        transaction.reciever_name.equals(currentUserName, ignoreCase = true) -> TransactionInvolvement(
+            "you borrowed", Color(0xFFFF8A50), Color(0xFFFF8A50)
+        )
+        else -> TransactionInvolvement(
+            "not involved", MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f), Color.Gray
+        )
     }
 }
-fun formatTransactionDate(dateString: String): String {
+
+fun parseDate(dateString: String): Long {
     return try {
-        // Assuming the date format from API, adjust as needed
-        val inputFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
-        val outputFormat = SimpleDateFormat("MMM\ndd", Locale.getDefault())
-        val date = inputFormat.parse(dateString)
-        outputFormat.format(date ?: Date())
+        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).parse(dateString)?.time ?: 0L
     } catch (e: Exception) {
-        // Fallback to current date if parsing fails
-        val currentDate = Date()
-        val calendar = Calendar.getInstance()
-        calendar.time = currentDate
+        0L
+    }
+}
 
-        val monthFormat = SimpleDateFormat("MMM", Locale.getDefault())
-        val dayFormat = SimpleDateFormat("dd", Locale.getDefault())
-
-        "${monthFormat.format(currentDate)}\n${dayFormat.format(currentDate)}"
+fun formatDate(dateString: String): String {
+    return try {
+        val date = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).parse(dateString)
+        SimpleDateFormat("MMM\ndd", Locale.getDefault()).format(date ?: Date())
+    } catch (e: Exception) {
+        "---"
     }
 }
 
 @Composable
 fun getCategoryColor(description: String): Color {
     return when {
-        description.contains("food", ignoreCase = true) ||
-                description.contains("restaurant", ignoreCase = true) ||
-                description.contains("meal", ignoreCase = true) ||
-                description.contains("dinner", ignoreCase = true) ||
-                description.contains("lunch", ignoreCase = true) ||
-                description.contains("breakfast", ignoreCase = true) -> Color(0xFFFF6B35) // Orange-red for food
-
-        description.contains("fuel", ignoreCase = true) ||
-                description.contains("gas", ignoreCase = true) ||
-                description.contains("petrol", ignoreCase = true) -> Color(0xFF4285F4) // Blue for fuel
-
-        description.contains("transport", ignoreCase = true) ||
-                description.contains("taxi", ignoreCase = true) ||
-                description.contains("uber", ignoreCase = true) ||
-                description.contains("car", ignoreCase = true) ||
-                description.contains("bus", ignoreCase = true) -> Color(0xFF34A853) // Green for transport
-
-        description.contains("hotel", ignoreCase = true) ||
-                description.contains("accommodation", ignoreCase = true) ||
-                description.contains("stay", ignoreCase = true) ||
-                description.contains("room", ignoreCase = true) -> Color(0xFF9C27B0) // Purple for accommodation
-
-        description.contains("movie", ignoreCase = true) ||
-                description.contains("entertainment", ignoreCase = true) ||
-                description.contains("game", ignoreCase = true) ||
-                description.contains("show", ignoreCase = true) -> Color(0xFFE91E63) // Pink for entertainment
-
-        description.contains("flight", ignoreCase = true) ||
-                description.contains("ticket", ignoreCase = true) ||
-                description.contains("travel", ignoreCase = true) -> Color(0xFF00BCD4) // Cyan for travel
-
-        description.contains("medical", ignoreCase = true) ||
-                description.contains("hospital", ignoreCase = true) ||
-                description.contains("doctor", ignoreCase = true) ||
-                description.contains("medicine", ignoreCase = true) -> Color(0xFFFF5722) // Deep orange for medical
-
-        description.contains("shopping", ignoreCase = true) ||
-                description.contains("grocery", ignoreCase = true) ||
-                description.contains("market", ignoreCase = true) -> Color(0xFF795548) // Brown for shopping
-
-        else -> Color(0xFF607D8B) // Blue-grey for others
+        description.contains("food", ignoreCase = true) -> Color(0xFFFF6B35)
+        description.contains("fuel", ignoreCase = true) -> Color(0xFF4285F4)
+        description.contains("transport", ignoreCase = true) -> Color(0xFF34A853)
+        description.contains("hotel", ignoreCase = true) -> Color(0xFF9C27B0)
+        description.contains("entertainment", ignoreCase = true) -> Color(0xFFE91E63)
+        description.contains("travel", ignoreCase = true) -> Color(0xFF00BCD4)
+        description.contains("medical", ignoreCase = true) -> Color(0xFFFF5722)
+        description.contains("shopping", ignoreCase = true) -> Color(0xFF795548)
+        else -> Color(0xFF607D8B)
     }
 }
 
 fun getCategoryIcon(description: String): ImageVector {
     return when {
-        description.contains("food", ignoreCase = true) ||
-                description.contains("restaurant", ignoreCase = true) ||
-                description.contains("meal", ignoreCase = true) ||
-                description.contains("dinner", ignoreCase = true) ||
-                description.contains("lunch", ignoreCase = true) ||
-                description.contains("breakfast", ignoreCase = true) -> Icons.Default.Favorite
-
-        description.contains("fuel", ignoreCase = true) ||
-                description.contains("gas", ignoreCase = true) ||
-                description.contains("petrol", ignoreCase = true) -> Icons.Default.Add
-
-        description.contains("transport", ignoreCase = true) ||
-                description.contains("taxi", ignoreCase = true) ||
-                description.contains("uber", ignoreCase = true) ||
-                description.contains("car", ignoreCase = true) ||
-                description.contains("bus", ignoreCase = true) -> Icons.Default.ArrowBack
-
-        description.contains("hotel", ignoreCase = true) ||
-                description.contains("accommodation", ignoreCase = true) ||
-                description.contains("stay", ignoreCase = true) ||
-                description.contains("room", ignoreCase = true) -> Icons.Default.AccountBox
-
-        description.contains("movie", ignoreCase = true) ||
-                description.contains("entertainment", ignoreCase = true) ||
-                description.contains("game", ignoreCase = true) ||
-                description.contains("show", ignoreCase = true) -> Icons.Default.Favorite
-
-        description.contains("flight", ignoreCase = true) ||
-                description.contains("ticket", ignoreCase = true) ||
-                description.contains("travel", ignoreCase = true) -> Icons.Default.ArrowBack
-
-        description.contains("medical", ignoreCase = true) ||
-                description.contains("hospital", ignoreCase = true) ||
-                description.contains("doctor", ignoreCase = true) ||
-                description.contains("medicine", ignoreCase = true) -> Icons.Default.Add
-
-        description.contains("shopping", ignoreCase = true) ||
-                description.contains("grocery", ignoreCase = true) ||
-                description.contains("market", ignoreCase = true) -> Icons.Default.ShoppingCart
-
-        description.contains("education", ignoreCase = true) ||
-                description.contains("school", ignoreCase = true) ||
-                description.contains("course", ignoreCase = true) -> Icons.Default.AccountBox
-
-        description.contains("work", ignoreCase = true) ||
-                description.contains("office", ignoreCase = true) ||
-                description.contains("business", ignoreCase = true) -> Icons.Default.AccountBox
-
-        else -> Icons.Default.Info // Default icon for unrecognized categories
+        description.contains("food", ignoreCase = true) -> Icons.Default.Restaurant
+        description.contains("fuel", ignoreCase = true) -> Icons.Default.LocalGasStation
+        description.contains("transport", ignoreCase = true) -> Icons.Default.DirectionsCar
+        description.contains("hotel", ignoreCase = true) -> Icons.Default.Hotel
+        description.contains("entertainment", ignoreCase = true) -> Icons.Default.Movie
+        description.contains("travel", ignoreCase = true) -> Icons.Default.Flight
+        description.contains("medical", ignoreCase = true) -> Icons.Default.LocalHospital
+        description.contains("shopping", ignoreCase = true) -> Icons.Default.ShoppingCart
+        else -> Icons.Default.Receipt
     }
 }

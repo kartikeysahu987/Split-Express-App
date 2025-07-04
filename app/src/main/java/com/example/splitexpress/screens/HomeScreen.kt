@@ -1,9 +1,6 @@
 package com.example.splitexpress.screens
 
 import android.util.Log
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -11,17 +8,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-//import androidx.compose.material.icons.filled.AccountBalanceWallet
-//import androidx.compose.material.icons.filled.ArrowDownward
-//import androidx.compose.material.icons.filled.ArrowUpward
-//import androidx.compose.material.icons.filled.ExitToApp
-//import androidx.compose.material.icons.filled.Groups
-//import androidx.compose.material.icons.filled.Person
-//import androidx.compose.material.icons.filled.Warning
-//import androidx.compose.material.icons.filled.Refresh
-//import androidx.compose.material.icons.filled.ChevronRight
-//import androidx.compose.material.icons.filled.TrendingUp
-//import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -767,30 +753,30 @@ fun ErrorStateCard(
     }
 }
 
-@Composable
-fun LoadingScreen() {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(40.dp),
-                color = MaterialTheme.colorScheme.primary,
-                strokeWidth = 3.dp
-            )
-
-            Text(
-                "Loading...",
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.outline,
-                modifier = Modifier.padding(top = 16.dp)
-            )
-        }
-    }
-}
+//@Composable
+//fun LoadingScreen() {
+//    Box(
+//        modifier = Modifier.fillMaxSize(),
+//        contentAlignment = Alignment.Center
+//    ) {
+//        Column(
+//            horizontalAlignment = Alignment.CenterHorizontally
+//        ) {
+//            CircularProgressIndicator(
+//                modifier = Modifier.size(40.dp),
+//                color = MaterialTheme.colorScheme.primary,
+//                strokeWidth = 3.dp
+//            )
+//
+//            Text(
+//                "Loading...",
+//                fontSize = 14.sp,
+//                color = MaterialTheme.colorScheme.outline,
+//                modifier = Modifier.padding(top = 16.dp)
+//            )
+//        }
+//    }
+//}
 
 // Enhanced settlement processing
 fun processSettlements(settlements: List<Settlement>): List<SettlementSummary> {
