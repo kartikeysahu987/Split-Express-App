@@ -1,709 +1,881 @@
-package com.example.splitexpress.screens
+    package com.example.splitexpress.screens
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
-import android.util.Log
-import android.widget.Toast
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.navigation.NavController
-import com.example.splitexpress.network.*
-import com.example.splitexpress.utils.TokenManager
-import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.*
+    import android.content.ClipData
+    import android.content.ClipboardManager
+    import android.content.Context
+    import android.util.Log
+    import android.widget.Toast
+    import androidx.compose.animation.*
+    import androidx.compose.foundation.BorderStroke
+    import androidx.compose.foundation.background
+    import androidx.compose.foundation.clickable
+    import androidx.compose.foundation.layout.*
+    import androidx.compose.foundation.lazy.LazyColumn
+    import androidx.compose.foundation.lazy.items
+    import androidx.compose.foundation.shape.CircleShape
+    import androidx.compose.foundation.shape.RoundedCornerShape
+    import androidx.compose.material.icons.Icons
+    import androidx.compose.material.icons.filled.*
+    import androidx.compose.material.icons.outlined.*
+    import androidx.compose.material3.*
+    import androidx.compose.runtime.*
+    import androidx.compose.ui.Alignment
+    import androidx.compose.ui.Modifier
+    import androidx.compose.ui.draw.clip
+    import androidx.compose.ui.graphics.Color
+    import androidx.compose.ui.graphics.vector.ImageVector
+    import androidx.compose.ui.platform.LocalContext
+    import androidx.compose.ui.semantics.Role
+    import androidx.compose.ui.text.font.FontWeight
+    import androidx.compose.ui.text.style.TextAlign
+    import androidx.compose.ui.text.style.TextOverflow
+    import androidx.compose.ui.unit.dp
+    import androidx.compose.ui.unit.sp
+    import androidx.navigation.NavController
+    import com.example.splitexpress.network.*
+    import com.example.splitexpress.utils.TokenManager
+    import kotlinx.coroutines.launch
+    import java.text.SimpleDateFormat
+    import java.util.*
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun TripDetailScreen(navController: NavController, tripId: String) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    @OptIn(ExperimentalMaterial3Api::class, ExperimentalAnimationApi::class)
+    @Composable
+    fun TripDetailScreen(navController: NavController, tripId: String) {
+        val context = LocalContext.current
+        val scope = rememberCoroutineScope()
+        var uiState by remember { mutableStateOf(TripDetailUiState()) }
 
-    // State management
-    var transactions by remember { mutableStateOf<List<Transaction>>(emptyList()) }
-    var settlements by remember { mutableStateOf<List<Settlement>>(emptyList()) }
-    var members by remember { mutableStateOf<MembersResponse?>(null) }
-    var currentUserName by remember { mutableStateOf<String?>(null) }
-    var inviteCode by remember { mutableStateOf<String?>(null) }
-    var tripName by remember { mutableStateOf<String?>(null) }
-    var isLoading by remember { mutableStateOf(true) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var selectedTab by remember { mutableStateOf(0) }
-    var isSettling by remember { mutableStateOf<String?>(null) }
-    var isRefreshing by remember { mutableStateOf(false) }
+        fun refreshData() {
+            scope.launch {
+                uiState = uiState.copy(isRefreshing = true)
+                try {
+                    val token = TokenManager.getToken(context) ?: return@launch
+                    val myTripsResponse = RetrofitInstance.api.getAllMyTrips(token = token)
+                    val currentTrip = myTripsResponse.body()?.user_items?.find { it.trip_id == tripId }
 
-    // Data loading functions
-    suspend fun loadTripData(token: String) {
-        try {
-            val myTripsResponse = RetrofitInstance.api.getAllMyTrips(token = token)
-            if (myTripsResponse.isSuccessful) {
-                val currentTrip = myTripsResponse.body()?.user_items?.find {
-                    it.trip_id == tripId || it._id == tripId
-                }
-                currentTrip?.let {
-                    inviteCode = it.invite_code
-                    tripName = it.trip_name
+                    val transactionsResponse = RetrofitInstance.api.getAllTransactions(
+                        token = token, request = GetTransactionsRequest(trip_id = tripId)
+                    )
+                    val settlementsResponse = RetrofitInstance.api.getSettlements(
+                        token = token, request = GetSettlementsRequest(trip_id = tripId)
+                    )
+                    val membersResponse = currentTrip?.invite_code?.let { code ->
+                        RetrofitInstance.api.getMembers(token = token, request = GetMembersRequest(invite_code = code))
+                    }
+                    val casualNameResponse = RetrofitInstance.api.getCasualNameByUID(
+                        token = token, request = GetCasualNameRequest(trip_id = tripId)
+                    )
+
+                    uiState = uiState.copy(
+                        tripName = currentTrip?.trip_name,
+                        inviteCode = currentTrip?.invite_code,
+                        transactions = transactionsResponse.body()?.transactions?.sortedByDescending {
+                            parseDate(it.created_at)
+                        } ?: emptyList(),
+                        settlements = settlementsResponse.body()?.settlements ?: emptyList(),
+                        members = membersResponse?.body(),
+                        currentUserName = casualNameResponse.body()?.casual_name,
+                        isLoading = false,
+                        isRefreshing = false,
+                        errorMessage = null
+                    )
+                } catch (e: Exception) {
+                    uiState = uiState.copy(
+                        isLoading = false,
+                        isRefreshing = false,
+                        errorMessage = "Failed to load data: ${e.message}"
+                    )
                 }
             }
-        } catch (e: Exception) {
-            Log.e("TripDetailScreen", "Error loading trip data", e)
         }
-    }
 
-    suspend fun loadMembers(token: String, code: String) {
-        try {
-            val response = RetrofitInstance.api.getMembers(
-                token = token,
-                request = GetMembersRequest(invite_code = code)
-            )
-            if (response.isSuccessful) {
-                members = response.body()
+        LaunchedEffect(tripId) {
+            val token = TokenManager.getToken(context)
+            if (token.isNullOrBlank()) {
+                uiState = uiState.copy(isLoading = false, errorMessage = "Authentication required")
+                return@LaunchedEffect
             }
-        } catch (e: Exception) {
-            Log.e("TripDetailScreen", "Error loading members", e)
-        }
-    }
-
-    fun refreshData() {
-        scope.launch {
-            isRefreshing = true
-            try {
-                val token = TokenManager.getToken(context) ?: return@launch
-
-                loadTripData(token)
-                inviteCode?.let { loadMembers(token, it) }
-
-                // Load transactions
-                val transactionsResponse = RetrofitInstance.api.getAllTransactions(
-                    token = token,
-                    request = GetTransactionsRequest(trip_id = tripId)
-                )
-                if (transactionsResponse.isSuccessful) {
-                    transactions = transactionsResponse.body()?.transactions?.sortedByDescending {
-                        parseDate(it.created_at)
-                    } ?: emptyList()
-                }
-
-                // Load settlements
-                val settlementsResponse = RetrofitInstance.api.getSettlements(
-                    token = token,
-                    request = GetSettlementsRequest(trip_id = tripId)
-                )
-                if (settlementsResponse.isSuccessful) {
-                    settlements = settlementsResponse.body()?.settlements ?: emptyList()
-                }
-
-                errorMessage = null
-            } catch (e: Exception) {
-                errorMessage = "Failed to refresh: ${e.message}"
-            } finally {
-                isRefreshing = false
-            }
-        }
-    }
-
-    // Initial data load
-    LaunchedEffect(tripId) {
-        val token = TokenManager.getToken(context)
-        if (token.isNullOrBlank()) {
-            errorMessage = "No token found"
-            isLoading = false
-            return@LaunchedEffect
-        }
-
-        try {
-            loadTripData(token)
-
-            // Get current user name
-            val casualNameResponse = RetrofitInstance.api.getCasualNameByUID(
-                token = token,
-                request = GetCasualNameRequest(trip_id = tripId)
-            )
-            if (casualNameResponse.isSuccessful) {
-                currentUserName = casualNameResponse.body()?.casual_name
-            }
-
             refreshData()
-        } catch (e: Exception) {
-            errorMessage = "Error: ${e.message}"
-        } finally {
-            isLoading = false
         }
-    }
 
-    // Refresh on tab change
-    LaunchedEffect(selectedTab) {
-        if (selectedTab == 1 || selectedTab == 2) refreshData()
-    }
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(tripName ?: "Trip Details", fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.Default.ArrowBack, "Back")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { refreshData() }, enabled = !isRefreshing) {
-                        if (isRefreshing) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                color = Color.White,
-                                strokeWidth = 2.dp
-                            )
-                        } else {
-                            Icon(Icons.Default.Refresh, "Refresh", tint = Color.White)
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = uiState.tripName ?: "Trip Details",
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = { navController.popBackStack() }) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                         }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White
-                )
-            )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { navController.navigate("payScreen/$tripId") },
-                containerColor = MaterialTheme.colorScheme.primary
-            ) {
-                Icon(Icons.Default.Add, "Add Payment", tint = Color.White)
-            }
-        }
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(16.dp)
-        ) {
-            // Invite Code Card
-            InviteCodeCard(
-                inviteCode = inviteCode,
-                onCopyClick = { code ->
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("Invite Code", code))
-                    Toast.makeText(context, "Copied to clipboard!", Toast.LENGTH_SHORT).show()
-                }
-            )
-
-            when {
-                isLoading -> LoadingScreen()
-                errorMessage != null -> ErrorScreen(errorMessage!!) { refreshData() }
-                else -> {
-                    // Tab Navigation
-                    TabRow(selectedTabIndex = selectedTab) {
-                        Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }) {
-                            Text("Transactions (${transactions.size})", modifier = Modifier.padding(16.dp))
-                        }
-                        Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }) {
-                            Text("Settlements (${settlements.size})", modifier = Modifier.padding(16.dp))
-                        }
-                        Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }) {
-                            Text("Members (${members?.total_members ?: "?"})", modifier = Modifier.padding(16.dp))
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Content based on selected tab
-                    when (selectedTab) {
-                        0 -> TransactionsContent(transactions, currentUserName)
-                        1 -> SettlementsContent(settlements, currentUserName, isSettling) { settlement ->
-                            val canSettle = settlement.from.equals(currentUserName, ignoreCase = true)
-                            if (canSettle) {
-                                val settlementKey = "${settlement.from}-${settlement.to}-${settlement.amount}"
-                                isSettling = settlementKey
-
-                                scope.launch {
-                                    try {
-                                        val token = TokenManager.getToken(context) ?: return@launch
-                                        val response = RetrofitInstance.api.settle(
-                                            token = token,
-                                            request = SettleRequest(
-                                                trip_id = tripId,
-                                                payer_name = settlement.to,
-                                                reciever_name = settlement.from,
-                                                amount = settlement.amount,
-                                                description = "Settlement payment"
-                                            )
-                                        )
-
-                                        if (response.isSuccessful) {
-                                            refreshData()
-                                        } else {
-                                            errorMessage = "Settlement failed"
-                                        }
-                                    } catch (e: Exception) {
-                                        errorMessage = "Settlement error: ${e.message}"
-                                    } finally {
-                                        isSettling = null
-                                    }
+                    },
+                    actions = {
+                        IconButton(onClick = { refreshData() }, enabled = !uiState.isRefreshing) {
+                            AnimatedContent(
+                                targetState = uiState.isRefreshing,
+                                transitionSpec = { fadeIn() with fadeOut() }
+                            ) { isRefreshing ->
+                                if (isRefreshing) {
+                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Icon(Icons.Default.Refresh, contentDescription = "Refresh")
                                 }
                             }
                         }
-                        2 -> MembersContent(members)
                     }
-                }
+                )
+            },
+            floatingActionButton = {
+                ExtendedFloatingActionButton(
+                    onClick = { navController.navigate("payScreen/$tripId") },
+                    icon = { Icon(Icons.Default.Add, contentDescription = "Add") },
+                    text = { Text("Add Payment") }
+                )
             }
-        }
-    }
-}
-
-@Composable
-fun InviteCodeCard(inviteCode: String?, onCopyClick: (String) -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = 16.dp)
-            .clickable { inviteCode?.let(onCopyClick) },
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-        ),
-        shape = RoundedCornerShape(12.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Invite Code", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
-                Spacer(modifier = Modifier.height(4.dp))
-
-                if (inviteCode != null) {
-                    Text(inviteCode, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    Text("Tap to copy", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                } else {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Loading...", fontSize = 16.sp)
-                    }
-                }
-            }
-            Icon(Icons.Default.ContentCopy, "Copy", tint = MaterialTheme.colorScheme.primary)
-        }
-    }
-}
-
-//@Composable
-//fun LoadingScreen() {
-//    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-//        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-//            CircularProgressIndicator()
-//            Text("Loading data...", modifier = Modifier.padding(top = 8.dp))
-//        }
-//    }
-//}
-
-@Composable
-fun ErrorScreen(message: String, onRetry: () -> Unit) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(message, color = MaterialTheme.colorScheme.error, fontSize = 16.sp)
-            Button(onClick = onRetry, modifier = Modifier.padding(top = 16.dp)) {
-                Text("Retry")
-            }
-        }
-    }
-}
-
-@Composable
-fun TransactionsContent(transactions: List<Transaction>, currentUserName: String?) {
-    if (transactions.isEmpty()) {
-        EmptyState("No transactions found")
-    } else {
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(transactions) { transaction ->
-                TransactionCard(transaction, currentUserName)
-            }
-        }
-    }
-}
-
-@Composable
-fun SettlementsContent(
-    settlements: List<Settlement>,
-    currentUserName: String?,
-    isSettling: String?,
-    onSettleClick: (Settlement) -> Unit
-) {
-    if (settlements.isEmpty()) {
-        EmptyState("No settlements required")
-    } else {
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(settlements) { settlement ->
-                SettlementCard(settlement, currentUserName, isSettling, onSettleClick)
-            }
-        }
-    }
-}
-
-@Composable
-fun MembersContent(members: MembersResponse?) {
-    members?.let { membersData ->
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            // Summary Card
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+        ) { paddingValues ->
+            Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
+                when {
+                    uiState.isLoading -> LoadingState()
+                    uiState.errorMessage != null -> ErrorState(
+                        message = uiState.errorMessage!!,
+                        onRetry = { refreshData() }
                     )
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Trip Summary", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            StatItem("Total", "${membersData.total_members}", Color.Gray)
-                            StatItem("Joined", "${membersData.total_not_free}", Color(0xFF4CAF50))
-                            StatItem("Pending", "${membersData.total_free}", Color(0xFFFF9800))
+                    else -> TripContent(
+                        uiState = uiState,
+                        onTabChange = { newTab -> uiState = uiState.copy(selectedTab = newTab) },
+                        onInviteCodeCopy = { code ->
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Invite Code", code))
+                            Toast.makeText(context, "Invite code copied!", Toast.LENGTH_SHORT).show()
+                        },
+                        onSettleClick = { settlement ->
+                            scope.launch {
+                                try {
+                                    val token = TokenManager.getToken(context) ?: return@launch
+                                    uiState = uiState.copy(isSettling = "${settlement.from}-${settlement.to}")
+                                    val response = RetrofitInstance.api.settle(
+                                        token = token,
+                                        request = SettleRequest(
+                                            trip_id = tripId,
+                                            payer_name = settlement.to,
+                                            reciever_name = settlement.from,
+                                            amount = settlement.amount,
+                                            description = "Settlement payment"
+                                        )
+                                    )
+                                    if (response.isSuccessful) {
+                                        refreshData()
+                                    } else {
+                                        uiState = uiState.copy(errorMessage = "Settlement failed")
+                                    }
+                                } catch (e: Exception) {
+                                    uiState = uiState.copy(errorMessage = "Settlement error: ${e.message}")
+                                } finally {
+                                    uiState = uiState.copy(isSettling = null)
+                                }
+                            }
                         }
-                    }
-                }
-            }
-
-            // Joined Members
-            if (!membersData.not_free_members.isNullOrEmpty()) {
-                item {
-                    Text("Joined Members", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4CAF50))
-                }
-                items(membersData.not_free_members) { member ->
-                    MemberCard(member, true)
-                }
-            }
-
-            // Pending Members
-            if (!membersData.free_members.isNullOrEmpty()) {
-                item {
-                    Text("Pending Members", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF9800))
-                }
-                items(membersData.free_members) { member ->
-                    MemberCard(member, false)
+                    )
                 }
             }
         }
-    } ?: LoadingScreen()
-}
-
-@Composable
-fun StatItem(label: String, value: String, color: Color) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(label, fontSize = 14.sp, color = color)
-        Text(value, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = color)
     }
-}
 
-@Composable
-fun MemberCard(memberName: String, hasJoined: Boolean) {
-    val color = if (hasJoined) Color(0xFF4CAF50) else Color(0xFFFF9800)
+    data class TripDetailUiState(
+        val tripName: String? = null,
+        val inviteCode: String? = null,
+        val transactions: List<Transaction> = emptyList(),
+        val settlements: List<Settlement> = emptyList(),
+        val members: MembersResponse? = null,
+        val currentUserName: String? = null,
+        val selectedTab: Int = 0,
+        val isLoading: Boolean = true,
+        val isRefreshing: Boolean = false,
+        val isSettling: String? = null,
+        val errorMessage: String? = null
+    )
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.1f))
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Person, null, tint = color)
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(memberName, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+    @Composable
+    private fun LoadingState() {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                CircularProgressIndicator()
+                Text(
+                    text = "Loading trip details...",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
+        }
+    }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
+    @Composable
+    private fun ErrorState(message: String, onRetry: () -> Unit) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
                 Icon(
-                    if (hasJoined) Icons.Default.CheckCircle else Icons.Default.Schedule,
-                    null,
-                    tint = color,
-                    modifier = Modifier.size(16.dp)
+                    imageVector = Icons.Default.Error,
+                    contentDescription = "Error",
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(48.dp)
                 )
-                Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    if (hasJoined) "Joined" else "Pending",
-                    fontSize = 12.sp,
-                    color = color,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun TransactionCard(transaction: Transaction, currentUserName: String?) {
-    val involvement = getTransactionInvolvement(transaction, currentUserName)
-    val isSettlement = transaction.type.equals("settle", ignoreCase = true)
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isSettlement)
-                MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
-            else MaterialTheme.colorScheme.surface
-        )
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Date and Icon
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(60.dp)) {
-                Text(
-                    formatDate(transaction.created_at),
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    text = message,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.error,
                     textAlign = TextAlign.Center
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Button(onClick = onRetry) { Text("Retry") }
+            }
+        }
+    }
 
+    @Composable
+    private fun TripContent(
+        uiState: TripDetailUiState,
+        onTabChange: (Int) -> Unit,
+        onInviteCodeCopy: (String) -> Unit,
+        onSettleClick: (Settlement) -> Unit
+    ) {
+        // Filter transactions to show only those where user is involved
+        val filteredTransactions = uiState.transactions.filter { transaction ->
+            transaction.payer_name.equals(uiState.currentUserName, ignoreCase = true) ||
+                    transaction.reciever_name.equals(uiState.currentUserName, ignoreCase = true)
+        }
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            item {
+                InviteCodeCard(inviteCode = uiState.inviteCode, onCopyClick = onInviteCodeCopy)
+            }
+
+            item {
+                TabNavigation(
+                    selectedTab = uiState.selectedTab,
+                    onTabChange = onTabChange,
+                    transactionCount = filteredTransactions.size,
+                    settlementCount = uiState.settlements.size,
+                    memberCount = uiState.members?.total_members ?: 0
+                )
+            }
+
+            when (uiState.selectedTab) {
+                0 -> items(filteredTransactions) { transaction ->
+                    TransactionCard(transaction = transaction, currentUserName = uiState.currentUserName)
+                }
+                1 -> items(uiState.settlements) { settlement ->
+                    SettlementCard(
+                        settlement = settlement,
+                        currentUserName = uiState.currentUserName,
+                        isSettling = uiState.isSettling?.contains("${settlement.from}-${settlement.to}") == true,
+                        onSettleClick = onSettleClick
+                    )
+                }
+                2 -> {
+                    uiState.members?.let { members ->
+                        item { MembersSummaryCard(members) }
+                        items(members.not_free_members ?: emptyList()) { member -> MemberCard(member, true) }
+                        items(members.free_members ?: emptyList()) { member -> MemberCard(member, false) }
+                    }
+                }
+            }
+
+            if (uiState.selectedTab == 0 && filteredTransactions.isEmpty()) {
+                item { EmptyStateCard("No transactions yet", "Add your first payment to get started") }
+            }
+            if (uiState.selectedTab == 1 && uiState.settlements.isEmpty()) {
+                item { EmptyStateCard("All settled up!", "No outstanding settlements") }
+            }
+            item { Spacer(modifier = Modifier.height(80.dp)) }
+        }
+    }
+    @Composable
+    private fun InviteCodeCard(inviteCode: String?, onCopyClick: (String) -> Unit) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Group,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Invite Code:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    if (inviteCode != null) {
+                        Text(
+                            text = inviteCode,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    } else {
+                        Text(
+                            text = "••••••",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = { inviteCode?.let(onCopyClick) },
+                    enabled = inviteCode != null,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ContentCopy,
+                        contentDescription = "Copy invite code",
+                        tint = if (inviteCode != null) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
+    }
+
+
+
+    @Composable
+    private fun TabNavigation(
+        selectedTab: Int,
+        onTabChange: (Int) -> Unit,
+        transactionCount: Int,
+        settlementCount: Int,
+        memberCount: Int
+    ) {
+        val tabs = listOf(
+            "Transactions" to transactionCount,
+            "Settlements" to settlementCount,
+            "Members" to memberCount
+        )
+
+        TabRow(selectedTabIndex = selectedTab) {
+            tabs.forEachIndexed { index, (title, count) ->
+                Tab(
+                    selected = selectedTab == index,
+                    onClick = { onTabChange(index) },
+                    text = { Text(text = "$title ($count)", style = MaterialTheme.typography.labelLarge) }
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun TransactionCard(transaction: Transaction, currentUserName: String?) {
+        val isSettlement = transaction.type.equals("settle", ignoreCase = true)
+        val isPayer = transaction.payer_name.equals(currentUserName, ignoreCase = true)
+        val isReceiver = transaction.reciever_name.equals(currentUserName, ignoreCase = true)
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (isSettlement)
+                    MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f)
+                else MaterialTheme.colorScheme.surface
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Left side - Date in a modern card format
+                Surface(
+                    modifier = Modifier.size(56.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                    border = BorderStroke(
+                        1.dp,
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        val dateComponents = formatDateComponents(transaction.created_at)
+                        Text(
+                            text = dateComponents.day,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 16.sp
+                        )
+                        Text(
+                            text = dateComponents.month,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(16.dp))
+
+                // Category icon with gradient-like effect
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(getCategoryColor(transaction.description ?: ""))
-                        .padding(8.dp),
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(
+                            brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+                                colors = listOf(
+                                    getCategoryColor(transaction.description ?: ""),
+                                    getCategoryColor(transaction.description ?: "").copy(alpha = 0.8f)
+                                )
+                            )
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        getCategoryIcon(transaction.description ?: ""),
-                        null,
+                        imageVector = getCategoryIcon(transaction.description ?: ""),
+                        contentDescription = null,
                         tint = Color.White,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            // Details
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    if (isSettlement) "Settlement" else (transaction.description ?: "Transaction"),
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    if (isSettlement)
-                        "${transaction.payer_name} settled with ${transaction.reciever_name}"
-                    else involvement.statusText,
-                    fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                )
-            }
-
-            // Amount
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    if (isSettlement) "settled" else involvement.statusText,
-                    fontSize = 12.sp,
-                    color = involvement.statusColor,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    "₹${transaction.amount}",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = involvement.amountColor
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun SettlementCard(
-    settlement: Settlement,
-    currentUserName: String?,
-    isSettling: String?,
-    onSettleClick: (Settlement) -> Unit
-) {
-    val canSettle = settlement.from.equals(currentUserName, ignoreCase = true)
-    val isCurrentUserInvolved = settlement.from.equals(currentUserName, ignoreCase = true) ||
-            settlement.to.equals(currentUserName, ignoreCase = true)
-    val settlementKey = "${settlement.from}-${settlement.to}-${settlement.amount}"
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = when {
-                canSettle -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
-                isCurrentUserInvolved -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                else -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
-            }
-        )
-    ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(if (canSettle) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        if (canSettle) "↑" else "↓",
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
+                        modifier = Modifier.size(22.dp)
                     )
                 }
 
                 Spacer(modifier = Modifier.width(16.dp))
 
+                // Transaction details with better typography
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        when {
-                            canSettle -> "You owe"
-                            isCurrentUserInvolved -> "You are owed"
-                            else -> "Settlement Required"
-                        },
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium
+                        text = if (isSettlement) "Settlement Payment"
+                        else (transaction.description ?: "Transaction"),
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
-                    Text("${settlement.from} → ${settlement.to}", fontSize = 14.sp)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = when {
+                            isSettlement -> "${transaction.payer_name} → ${transaction.reciever_name}"
+                            isPayer -> "You paid ${transaction.reciever_name}"
+                            isReceiver -> "${transaction.payer_name} paid you"
+                            else -> "Not involved"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
 
-                Text(
-                    "₹${settlement.amount}",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (canSettle) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Button(
-                onClick = { onSettleClick(settlement) },
-                enabled = canSettle && isSettling != settlementKey,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (canSettle) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary
-                )
-            ) {
-                if (isSettling == settlementKey) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Settling...")
-                } else {
-                    Text(
-                        when {
-                            canSettle -> "Settle Payment"
-                            isCurrentUserInvolved -> "Waiting for ${settlement.from}"
-                            else -> "Not your settlement"
+                // Amount section with modern styling
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    modifier = Modifier.padding(start = 8.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = when {
+                            isPayer -> Color(0xFF4CAF50).copy(alpha = 0.1f)
+                            isReceiver -> Color(0xFFFF8A50).copy(alpha = 0.1f)
+                            else -> MaterialTheme.colorScheme.surfaceVariant
                         }
-                    )
+                    ) {
+                        Text(
+                            text = "₹${transaction.amount}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = when {
+                                isPayer -> Color(0xFF4CAF50)
+                                isReceiver -> Color(0xFFFF8A50)
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Icon(
+                            imageVector = when {
+                                isPayer -> Icons.Default.TrendingUp
+                                isReceiver -> Icons.Default.TrendingDown
+                                else -> Icons.Default.Remove
+                            },
+                            contentDescription = null,
+                            modifier = Modifier.size(12.dp),
+                            tint = when {
+                                isPayer -> Color(0xFF4CAF50)
+                                isReceiver -> Color(0xFFFF8A50)
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = when {
+                                isPayer -> "Lent"
+                                isReceiver -> "Borrowed"
+                                else -> "N/A"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = when {
+                                isPayer -> Color(0xFF4CAF50)
+                                isReceiver -> Color(0xFFFF8A50)
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
             }
         }
     }
-}
 
-@Composable
-fun EmptyState(message: String) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(message, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+    // Helper data class for date components
+    data class DateComponents(
+        val day: String,
+        val month: String,
+        val year: String
+    )
+
+    // Helper function to format date into components
+    fun formatDateComponents(dateString: String): DateComponents {
+        return try {
+            val date = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).parse(dateString)
+            if (date != null) {
+                val dayFormat = SimpleDateFormat("dd", Locale.getDefault())
+                val monthFormat = SimpleDateFormat("MMM", Locale.getDefault())
+                val yearFormat = SimpleDateFormat("yyyy", Locale.getDefault())
+
+                DateComponents(
+                    day = dayFormat.format(date),
+                    month = monthFormat.format(date).uppercase(),
+                    year = yearFormat.format(date)
+                )
+            } else {
+                DateComponents("--", "---", "----")
+            }
+        } catch (e: Exception) {
+            DateComponents("--", "---", "----")
+        }
     }
-}
 
-// Helper Functions
-data class TransactionInvolvement(
-    val statusText: String,
-    val statusColor: Color,
-    val amountColor: Color
-)
+    @Composable
+    private fun SettlementCard(
+        settlement: Settlement,
+        currentUserName: String?,
+        isSettling: Boolean,
+        onSettleClick: (Settlement) -> Unit
+    ) {
+        val canSettle = settlement.from.equals(currentUserName, ignoreCase = true)
+        val isReceiver = settlement.to.equals(currentUserName, ignoreCase = true)
 
-@Composable
-fun getTransactionInvolvement(transaction: Transaction, currentUserName: String?): TransactionInvolvement {
-    return when {
-        transaction.payer_name.equals(currentUserName, ignoreCase = true) -> TransactionInvolvement(
-            "you lent", Color(0xFF4CAF50), Color(0xFF4CAF50)
-        )
-        transaction.reciever_name.equals(currentUserName, ignoreCase = true) -> TransactionInvolvement(
-            "you borrowed", Color(0xFFFF8A50), Color(0xFFFF8A50)
-        )
-        else -> TransactionInvolvement(
-            "not involved", MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f), Color.Gray
-        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = when {
+                    canSettle -> MaterialTheme.colorScheme.primaryContainer  // Green/positive when you're owed money
+                    isReceiver -> MaterialTheme.colorScheme.errorContainer  // Red when you owe money
+                    else -> MaterialTheme.colorScheme.surfaceVariant
+                }
+            )
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = when {
+                                canSettle -> Icons.Default.TrendingUp
+                                isReceiver -> Icons.Default.TrendingDown
+                                else -> Icons.Default.SwapHoriz
+                            },
+                            contentDescription = null,
+                            tint = when {
+                                canSettle -> MaterialTheme.colorScheme.error
+                                isReceiver -> MaterialTheme.colorScheme.secondary
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = when {
+                                canSettle -> "${settlement.to} owes you"  // Someone owes you
+                                isReceiver -> "You owe ${settlement.from}"  // You owe someone
+                                else -> "${settlement.from} owes ${settlement.to}"
+                            },
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    Text(
+                        text = "₹${"%.2f".format(settlement.amount.toDoubleOrNull() ?: 0.0)}",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = when {
+                            canSettle -> MaterialTheme.colorScheme.error  // Red when you owe
+                            isReceiver -> MaterialTheme.colorScheme.primary  // Green when you're owed
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (canSettle) {
+                    Button(
+                        onClick = { onSettleClick(settlement) },
+                        enabled = !isSettling,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError
+                        )
+                    ) {
+                        if (isSettling) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onError
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Settling...")
+                        } else {
+                            Icon(Icons.Default.Payment, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Settle Payment")
+                        }
+                    }
+                } else {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Text(
+                            text = if (isReceiver) "Waiting for payment" else "Not your settlement",
+                            modifier = Modifier.padding(12.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+        }
     }
-}
 
-fun parseDate(dateString: String): Long {
-    return try {
-        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).parse(dateString)?.time ?: 0L
-    } catch (e: Exception) {
-        0L
+    @Composable
+    private fun MembersSummaryCard(members: MembersResponse) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                Text(
+                    text = "Trip Overview",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    StatItem("Total", "${members.total_members}", MaterialTheme.colorScheme.onPrimaryContainer)
+                    StatItem("Active", "${members.total_not_free}", Color(0xFF4CAF50))
+                    StatItem("Pending", "${members.total_free}", Color(0xFFFF9800))
+                }
+            }
+        }
     }
-}
 
-fun formatDate(dateString: String): String {
-    return try {
-        val date = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).parse(dateString)
-        SimpleDateFormat("MMM\ndd", Locale.getDefault()).format(date ?: Date())
-    } catch (e: Exception) {
-        "---"
+    @Composable
+    private fun StatItem(label: String, value: String, color: Color) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = color
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = color.copy(alpha = 0.8f)
+            )
+        }
     }
-}
 
-@Composable
-fun getCategoryColor(description: String): Color {
-    return when {
-        description.contains("food", ignoreCase = true) -> Color(0xFFFF6B35)
-        description.contains("fuel", ignoreCase = true) -> Color(0xFF4285F4)
-        description.contains("transport", ignoreCase = true) -> Color(0xFF34A853)
-        description.contains("hotel", ignoreCase = true) -> Color(0xFF9C27B0)
-        description.contains("entertainment", ignoreCase = true) -> Color(0xFFE91E63)
-        description.contains("travel", ignoreCase = true) -> Color(0xFF00BCD4)
-        description.contains("medical", ignoreCase = true) -> Color(0xFFFF5722)
-        description.contains("shopping", ignoreCase = true) -> Color(0xFF795548)
-        else -> Color(0xFF607D8B)
-    }
-}
+    @Composable
+    private fun MemberCard(memberName: String, hasJoined: Boolean) {
+        val statusColor = if (hasJoined) Color(0xFF4CAF50) else Color(0xFFFF9800)
 
-fun getCategoryIcon(description: String): ImageVector {
-    return when {
-        description.contains("food", ignoreCase = true) -> Icons.Default.Restaurant
-        description.contains("fuel", ignoreCase = true) -> Icons.Default.LocalGasStation
-        description.contains("transport", ignoreCase = true) -> Icons.Default.DirectionsCar
-        description.contains("hotel", ignoreCase = true) -> Icons.Default.Hotel
-        description.contains("entertainment", ignoreCase = true) -> Icons.Default.Movie
-        description.contains("travel", ignoreCase = true) -> Icons.Default.Flight
-        description.contains("medical", ignoreCase = true) -> Icons.Default.LocalHospital
-        description.contains("shopping", ignoreCase = true) -> Icons.Default.ShoppingCart
-        else -> Icons.Default.Receipt
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = statusColor.copy(alpha = 0.1f))
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier.size(40.dp).clip(CircleShape)
+                        .background(statusColor.copy(alpha = 0.2f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Person,
+                        contentDescription = null,
+                        tint = statusColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = memberName,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = statusColor.copy(alpha = 0.2f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = if (hasJoined) Icons.Default.CheckCircle else Icons.Default.Schedule,
+                            contentDescription = null,
+                            tint = statusColor,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (hasJoined) "Active" else "Pending",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = statusColor,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
     }
-}
+
+    @Composable
+    private fun EmptyStateCard(title: String, subtitle: String) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Inbox,
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+            }
+        }
+    }
+
+    fun parseDate(dateString: String): Long {
+        return try {
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).parse(dateString)?.time ?: 0L
+        } catch (e: Exception) { 0L }
+    }
+
+    fun formatDate(dateString: String): String {
+        return try {
+            val date = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).parse(dateString)
+            SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(date ?: Date())
+        } catch (e: Exception) { "Date unknown" }
+    }
+
+    @Composable
+    fun getCategoryColor(description: String): Color {
+        return when {
+            description.contains("food", ignoreCase = true) -> Color(0xFFFF6B35)
+            description.contains("fuel", ignoreCase = true) -> Color(0xFF4285F4)
+            description.contains("transport", ignoreCase = true) -> Color(0xFF34A853)
+            description.contains("hotel", ignoreCase = true) -> Color(0xFF9C27B0)
+            description.contains("entertainment", ignoreCase = true) -> Color(0xFFE91E63)
+            description.contains("travel", ignoreCase = true) -> Color(0xFF00BCD4)
+            description.contains("medical", ignoreCase = true) -> Color(0xFFFF5722)
+            description.contains("shopping", ignoreCase = true) -> Color(0xFF795548)
+            else -> Color(0xFF607D8B)
+        }
+    }
+
+    fun getCategoryIcon(description: String): ImageVector {
+        return when {
+            description.contains("food", ignoreCase = true) -> Icons.Default.Restaurant
+            description.contains("fuel", ignoreCase = true) -> Icons.Default.LocalGasStation
+            description.contains("transport", ignoreCase = true) -> Icons.Default.DirectionsCar
+            description.contains("hotel", ignoreCase = true) -> Icons.Default.Hotel
+            description.contains("entertainment", ignoreCase = true) -> Icons.Default.Movie
+            description.contains("travel", ignoreCase = true) -> Icons.Default.Flight
+            description.contains("medical", ignoreCase = true) -> Icons.Default.LocalHospital
+            description.contains("shopping", ignoreCase = true) -> Icons.Default.ShoppingCart
+            else -> Icons.Default.Receipt
+        }
+    }

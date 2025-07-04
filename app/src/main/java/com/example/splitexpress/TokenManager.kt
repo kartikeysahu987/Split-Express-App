@@ -62,4 +62,14 @@ object TokenManager {
         val token = getToken(context)
         return if (token != null) "$token" else null
     }
+    fun getCurrentUserName(context: Context): String? {
+        val sharedPref = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val firstName = sharedPref.getString("first_name", null)
+        val lastName = sharedPref.getString("last_name", null)
+
+        return if (firstName != null && lastName != null) {
+            "${firstName}_${lastName}"
+        } else null
+    }
 }
+

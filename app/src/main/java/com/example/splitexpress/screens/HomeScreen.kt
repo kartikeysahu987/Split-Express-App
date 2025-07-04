@@ -1,5 +1,6 @@
 package com.example.splitexpress.screens
 
+import android.content.Context
 import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -108,7 +109,7 @@ fun HomeScreen(navController: NavController) {
                 }
 
                 val allSettlements = settlementTasks.awaitAll().flatten()
-                settlementSummaries = processSettlements(allSettlements)
+                settlementSummaries = processSettlements(allSettlements, context)
 
             } else {
                 errorMessage = "Unable to load your trips. Please try again."
@@ -753,33 +754,35 @@ fun ErrorStateCard(
     }
 }
 
-//@Composable
-//fun LoadingScreen() {
-//    Box(
-//        modifier = Modifier.fillMaxSize(),
-//        contentAlignment = Alignment.Center
-//    ) {
-//        Column(
-//            horizontalAlignment = Alignment.CenterHorizontally
-//        ) {
-//            CircularProgressIndicator(
-//                modifier = Modifier.size(40.dp),
-//                color = MaterialTheme.colorScheme.primary,
-//                strokeWidth = 3.dp
-//            )
-//
-//            Text(
-//                "Loading...",
-//                fontSize = 14.sp,
-//                color = MaterialTheme.colorScheme.outline,
-//                modifier = Modifier.padding(top = 16.dp)
-//            )
-//        }
-//    }
-//}
+@Composable
+fun LoadingScreen() {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(40.dp),
+                color = MaterialTheme.colorScheme.primary,
+                strokeWidth = 3.dp
+            )
+
+            Text(
+                "Loading...",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.padding(top = 16.dp)
+            )
+        }
+    }
+}
 
 // Enhanced settlement processing
-fun processSettlements(settlements: List<Settlement>): List<SettlementSummary> {
+// Enhanced settlement processing
+fun processSettlements(settlements: List<Settlement>, context: Context): List<SettlementSummary> {
+    val currentUser = TokenManager.getCurrentUserName(context) ?: ""
     val summaryMap = mutableMapOf<String, SettlementSummary>()
 
     settlements.forEach { settlement ->
@@ -802,13 +805,15 @@ fun processSettlements(settlements: List<Settlement>): List<SettlementSummary> {
         )
     }
 
-    return summaryMap.values.map { summary ->
-        val netAmount = summary.amountOwedToMe - summary.amountIOwe
-        summary.copy(
-            netAmount = netAmount,
-            isPositive = netAmount > 0,
-            formattedAmount = "₹${String.format("%.2f", kotlin.math.abs(netAmount))}"
-        )
-    }.filter { it.netAmount != 0.0 }
+    return summaryMap.values
+        .filter { it.personName != currentUser } // Filter out current user
+        .map { summary ->
+            val netAmount = summary.amountOwedToMe - summary.amountIOwe
+            summary.copy(
+                netAmount = netAmount,
+                isPositive = netAmount > 0,
+                formattedAmount = "₹${String.format("%.2f", kotlin.math.abs(netAmount))}"
+            )
+        }.filter { it.netAmount != 0.0 }
         .sortedByDescending { it.netAmount }
 }
