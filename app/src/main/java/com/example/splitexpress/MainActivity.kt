@@ -11,6 +11,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -77,15 +78,17 @@ fun AppNavHost(
             HomeScreen(navController = navController)
         }
         composable("createtrip") {
-            val viewModel = CreateTripViewModel()
+            val viewModel = viewModel<CreateTripViewModel>()
             CreateTripScreen(
                 viewModel = viewModel,
                 onTripCreated = {
-                    // navigate back to home or show a message
-                    navController.popBackStack()
-                }
+                    navController.popBackStack() // or navController.navigate("home")
+                },
+
+                navController = navController
             )
         }
+
         // Add the new Join Trip route
         composable("joinTrip") {
             JoinTripScreen(navController = navController)

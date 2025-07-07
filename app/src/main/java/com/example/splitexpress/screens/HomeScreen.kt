@@ -780,7 +780,6 @@ fun LoadingScreen() {
 }
 
 // Enhanced settlement processing
-// Enhanced settlement processing
 fun processSettlements(settlements: List<Settlement>, context: Context): List<SettlementSummary> {
     val currentUser = TokenManager.getCurrentUserName(context) ?: ""
     val summaryMap = mutableMapOf<String, SettlementSummary>()

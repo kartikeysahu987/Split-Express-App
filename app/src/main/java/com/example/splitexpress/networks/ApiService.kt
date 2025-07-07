@@ -84,7 +84,8 @@ data class CreateTripRequest(
 
 data class CreateTripResponse(
     val message: String,
-    val tripID: String
+    val tripID: String,
+    val invite_code: String,
 )
 
 data class Trip(
@@ -202,7 +203,38 @@ data class GetCasualNameResponse(
     val casual_name: String,
     val trip_id: String
 )
+// ---- CONTACT DATA CLASSES ----
 
+data class Contact(
+    val name: String?,
+    val contactno: String?
+)
+
+data class ContactInfo(
+    val name: String?,
+    val contactno: String?,
+    val uid: String?,
+    val username: String?
+)
+
+data class GetContactRequest(
+    val contacts: List<Contact>
+)
+
+data class PostContactResponse(
+    val contactsinfo: List<ContactInfo>
+)
+
+data class ContactInfoResponse(
+    val message: String,
+    val data: PostContactResponse
+)
+
+data class AutomaticLinkMemberRequest(
+    val invite_code: String,
+    val name: String,
+    val uid: String
+)
 
 // ---- RETROFIT SERVICE ----
 
@@ -296,6 +328,19 @@ interface ApiService {
         @Header("token") token: String,
         @Body request: GetCasualNameRequest
     ): Response<GetCasualNameResponse>
+
+    // Contact endpoints
+    @POST("trip/contactinfo")
+    suspend fun getContactInfo(
+        @Header("token") token: String,
+        @Body request: GetContactRequest
+    ): Response<ContactInfoResponse>
+
+    @POST("trip/automaticlinkmember")
+    suspend fun automaticLinkMember(
+        @Header("token") token: String,
+        @Body request: AutomaticLinkMemberRequest
+    ): Response<LinkMemberResponse>
 }
 
 // ---- RETROFIT INSTANCE ----
