@@ -8,6 +8,7 @@ import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Response
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 // ---- USER DATA CLASSES ----
 
@@ -241,10 +242,10 @@ data class AutomaticLinkMemberRequest(
 interface ApiService {
 
     // User endpoints
-    @POST("users/signup")
+    @POST("auth/signup")
     suspend fun signup(@Body request: SignupRequest): Response<SignupResponse>
 
-    @POST("users/login")
+    @POST("auth/login")
     suspend fun login(@Body request: LoginRequest): Response<LoginResponse>
 
     @GET("users")
@@ -257,10 +258,10 @@ interface ApiService {
     ): Response<User>
 
     // OTP endpoints
-    @POST("users/getotp")
+    @POST("auth/getotp")
     suspend fun getOTP(@Body request: OTPRequest): Response<OTPResponse>
 
-    @POST("users/verifyotp")
+    @POST("auth/verifyotp")
     suspend fun verifyOTP(@Body request: OTPVerification): Response<OTPVerificationResponse>
 
     // Trip endpoints
@@ -344,18 +345,23 @@ interface ApiService {
 }
 
 // ---- RETROFIT INSTANCE ----
-
 object RetrofitInstance {
 
     private val interceptor = HttpLoggingInterceptor().apply {
         level = HttpLoggingInterceptor.Level.BODY
     }
 
+    // Create OkHttpClient with extended timeouts for AWS
     private val client = OkHttpClient.Builder()
         .addInterceptor(interceptor)
+        .connectTimeout(60, TimeUnit.SECONDS)      // Connection timeout
+        .readTimeout(120, TimeUnit.SECONDS)        // Read timeout (increased for AWS)
+        .writeTimeout(120, TimeUnit.SECONDS)       // Write timeout
+        .callTimeout(180, TimeUnit.SECONDS)        // Overall call timeout
+        .retryOnConnectionFailure(true)            // Retry on connection failure
         .build()
-
-    private const val BASE_URL = "https://split-go.onrender.com/"
+    //    private const val BASE_URL = "https://split-go.onrender.com/"
+    private const val BASE_URL = "https://032w6y28pi.execute-api.ap-south-1.amazonaws.com/"
 
     val api: ApiService by lazy {
         Retrofit.Builder()

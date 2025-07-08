@@ -9,19 +9,17 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
-//import androidx.compose.material.icons.filled.RemoveRedEye
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.RemoveRedEye
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
@@ -33,8 +31,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
-import com.example.splitexpress.network.SignupRequest
 import com.example.splitexpress.network.RetrofitInstance
+import com.example.splitexpress.network.SignupRequest
 import com.example.splitexpress.utils.TokenManager
 import kotlinx.coroutines.launch
 
@@ -65,7 +63,7 @@ fun SignupScreen(navController: NavController) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
 
-    // Validation functions
+    // Validation functions (UNCHANGED)
     fun validateFirstName(): Boolean {
         return when {
             firstName.isBlank() -> {
@@ -181,10 +179,17 @@ fun SignupScreen(navController: NavController) {
     }
 
     fun isFormValid(): Boolean {
-        return validateFirstName() && validateLastName() && validateEmail() &&
-                validatePhone() && validatePassword() && validateConfirmPassword()
+        // Trigger validation for all fields to show errors if form is submitted empty
+        val isFirstNameValid = validateFirstName()
+        val isLastNameValid = validateLastName()
+        val isEmailValid = validateEmail()
+        val isPhoneValid = validatePhone()
+        val isPasswordValid = validatePassword()
+        val isConfirmPasswordValid = validateConfirmPassword()
+        return isFirstNameValid && isLastNameValid && isEmailValid && isPhoneValid && isPasswordValid && isConfirmPasswordValid
     }
 
+    // --- UI Layout Refactored ---
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -201,209 +206,202 @@ fun SignupScreen(navController: NavController) {
                 fontWeight = FontWeight.Bold,
                 fontSize = 32.sp
             ),
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(bottom = 8.dp)
+            color = MaterialTheme.colorScheme.primary
         )
+
+        Spacer(modifier = Modifier.height(8.dp))
 
         Text(
             text = "Join SplitExpress and start managing your expenses",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(bottom = 32.dp)
+            textAlign = TextAlign.Center
         )
 
-        // Form Fields
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                // First Name
-                OutlinedTextField(
-                    value = firstName,
-                    onValueChange = {
-                        firstName = it.trimStart()
-                        if (firstNameError.isNotEmpty()) validateFirstName()
-                    },
-                    label = { Text("First Name") },
-                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !isLoading,
-                    isError = firstNameError.isNotEmpty(),
-                    supportingText = if (firstNameError.isNotEmpty()) {
-                        { Text(firstNameError) }
-                    } else null,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Text,
-                        imeAction = ImeAction.Next
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onNext = { focusManager.moveFocus(FocusDirection.Down) }
-                    ),
-                    shape = RoundedCornerShape(12.dp)
-                )
+        Spacer(modifier = Modifier.height(32.dp))
 
-                // Last Name
-                OutlinedTextField(
-                    value = lastName,
-                    onValueChange = {
-                        lastName = it.trimStart()
-                        if (lastNameError.isNotEmpty()) validateLastName()
-                    },
-                    label = { Text("Last Name") },
-                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !isLoading,
-                    isError = lastNameError.isNotEmpty(),
-                    supportingText = if (lastNameError.isNotEmpty()) {
-                        { Text(lastNameError) }
-                    } else null,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Text,
-                        imeAction = ImeAction.Next
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onNext = { focusManager.moveFocus(FocusDirection.Down) }
-                    ),
-                    shape = RoundedCornerShape(12.dp)
-                )
+        // Form Fields (without the wrapping Card)
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            // First Name
+            OutlinedTextField(
+                value = firstName,
+                onValueChange = {
+                    firstName = it.trimStart()
+                    if (firstNameError.isNotEmpty()) validateFirstName()
+                },
+                label = { Text("First Name") },
+                leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isLoading,
+                isError = firstNameError.isNotEmpty(),
+                supportingText = if (firstNameError.isNotEmpty()) {
+                    { Text(firstNameError) }
+                } else null,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Text,
+                    imeAction = ImeAction.Next
+                ),
+                keyboardActions = KeyboardActions(
+                    onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                ),
+                shape = RoundedCornerShape(12.dp)
+            )
 
-                // Email
-                OutlinedTextField(
-                    value = email,
-                    onValueChange = {
-                        email = it.trim()
-                        if (emailError.isNotEmpty()) validateEmail()
-                    },
-                    label = { Text("Email Address") },
-                    leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Email,
-                        imeAction = ImeAction.Next
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onNext = { focusManager.moveFocus(FocusDirection.Down) }
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !isLoading,
-                    isError = emailError.isNotEmpty(),
-                    supportingText = if (emailError.isNotEmpty()) {
-                        { Text(emailError) }
-                    } else null,
-                    shape = RoundedCornerShape(12.dp)
-                )
+            // Last Name
+            OutlinedTextField(
+                value = lastName,
+                onValueChange = {
+                    lastName = it.trimStart()
+                    if (lastNameError.isNotEmpty()) validateLastName()
+                },
+                label = { Text("Last Name") },
+                leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isLoading,
+                isError = lastNameError.isNotEmpty(),
+                supportingText = if (lastNameError.isNotEmpty()) {
+                    { Text(lastNameError) }
+                } else null,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Text,
+                    imeAction = ImeAction.Next
+                ),
+                keyboardActions = KeyboardActions(
+                    onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                ),
+                shape = RoundedCornerShape(12.dp)
+            )
 
-                // Phone Number
-                OutlinedTextField(
-                    value = phone,
-                    onValueChange = { newValue ->
-                        // Only allow digits and limit to 10 characters
-                        if (newValue.all { it.isDigit() } && newValue.length <= 10) {
-                            phone = newValue
-                            if (phoneError.isNotEmpty()) validatePhone()
-                        }
-                    },
-                    label = { Text("Phone Number") },
-                    leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Phone,
-                        imeAction = ImeAction.Next
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onNext = { focusManager.moveFocus(FocusDirection.Down) }
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !isLoading,
-                    isError = phoneError.isNotEmpty(),
-                    supportingText = if (phoneError.isNotEmpty()) {
-                        { Text(phoneError) }
-                    } else if (phone.isNotEmpty() && phone.length < 10) {
-                        { Text("${phone.length}/10 digits") }
-                    } else null,
-                    shape = RoundedCornerShape(12.dp),
-                    placeholder = { Text("10-digit phone number") }
-                )
+            // Email
+            OutlinedTextField(
+                value = email,
+                onValueChange = {
+                    email = it.trim()
+                    if (emailError.isNotEmpty()) validateEmail()
+                },
+                label = { Text("Email Address") },
+                leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Email,
+                    imeAction = ImeAction.Next
+                ),
+                keyboardActions = KeyboardActions(
+                    onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                ),
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isLoading,
+                isError = emailError.isNotEmpty(),
+                supportingText = if (emailError.isNotEmpty()) {
+                    { Text(emailError) }
+                } else null,
+                shape = RoundedCornerShape(12.dp)
+            )
 
-                // Password
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = {
-                        password = it
-                        if (passwordError.isNotEmpty()) validatePassword()
-                        if (confirmPassword.isNotEmpty()) validateConfirmPassword()
-                    },
-                    label = { Text("Password") },
-                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                    trailingIcon = {
-                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                            Icon(
-                                imageVector = if (passwordVisible) Icons.Default.Close else Icons.Default.RemoveRedEye,
-                                contentDescription = if (passwordVisible) "Hide password" else "Show password"
-                            )
-                        }
-                    },
-                    visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Password,
-                        imeAction = ImeAction.Next
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onNext = { focusManager.moveFocus(FocusDirection.Down) }
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !isLoading,
-                    isError = passwordError.isNotEmpty(),
-                    supportingText = if (passwordError.isNotEmpty()) {
-                        { Text(passwordError) }
-                    } else {
-                        { Text("At least 8 characters with uppercase, lowercase, and number") }
-                    },
-                    shape = RoundedCornerShape(12.dp)
-                )
+            // Phone Number
+            OutlinedTextField(
+                value = phone,
+                onValueChange = { newValue ->
+                    if (newValue.all { it.isDigit() } && newValue.length <= 10) {
+                        phone = newValue
+                        if (phoneError.isNotEmpty()) validatePhone()
+                    }
+                },
+                label = { Text("Phone Number") },
+                leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Phone,
+                    imeAction = ImeAction.Next
+                ),
+                keyboardActions = KeyboardActions(
+                    onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                ),
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isLoading,
+                isError = phoneError.isNotEmpty(),
+                supportingText = if (phoneError.isNotEmpty()) {
+                    { Text(phoneError) }
+                } else if (phone.isNotEmpty() && phone.length < 10) {
+                    { Text("${phone.length}/10 digits") }
+                } else null,
+                shape = RoundedCornerShape(12.dp),
+                placeholder = { Text("10-digit phone number") }
+            )
 
-                // Confirm Password
-                OutlinedTextField(
-                    value = confirmPassword,
-                    onValueChange = {
-                        confirmPassword = it
-                        if (confirmPasswordError.isNotEmpty()) validateConfirmPassword()
-                    },
-                    label = { Text("Confirm Password") },
-                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                    trailingIcon = {
-                        IconButton(onClick = { confirmPasswordVisible = !confirmPasswordVisible }) {
-                            Icon(
-                                imageVector = if (confirmPasswordVisible) Icons.Default.Close else Icons.Default.RemoveRedEye,
-                                contentDescription = if (confirmPasswordVisible) "Hide password" else "Show password"
-                            )
-                        }
-                    },
-                    visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Password,
-                        imeAction = ImeAction.Done
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onDone = { focusManager.clearFocus() }
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !isLoading,
-                    isError = confirmPasswordError.isNotEmpty(),
-                    supportingText = if (confirmPasswordError.isNotEmpty()) {
-                        { Text(confirmPasswordError) }
-                    } else null,
-                    shape = RoundedCornerShape(12.dp)
-                )
-            }
+            // Password
+            OutlinedTextField(
+                value = password,
+                onValueChange = {
+                    password = it
+                    if (passwordError.isNotEmpty()) validatePassword()
+                    if (confirmPassword.isNotEmpty()) validateConfirmPassword()
+                },
+                label = { Text("Password") },
+                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                trailingIcon = {
+                    IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                        Icon(
+                            imageVector = if (passwordVisible) Icons.Default.Close else Icons.Default.RemoveRedEye,
+                            contentDescription = if (passwordVisible) "Hide password" else "Show password"
+                        )
+                    }
+                },
+                visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Password,
+                    imeAction = ImeAction.Next
+                ),
+                keyboardActions = KeyboardActions(
+                    onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                ),
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isLoading,
+                isError = passwordError.isNotEmpty(),
+                supportingText = if (passwordError.isNotEmpty()) {
+                    { Text(passwordError) }
+                } else {
+                    { Text("At least 8 characters with uppercase, lowercase, and number") }
+                },
+                shape = RoundedCornerShape(12.dp)
+            )
+
+            // Confirm Password
+            OutlinedTextField(
+                value = confirmPassword,
+                onValueChange = {
+                    confirmPassword = it
+                    if (confirmPasswordError.isNotEmpty()) validateConfirmPassword()
+                },
+                label = { Text("Confirm Password") },
+                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                trailingIcon = {
+                    IconButton(onClick = { confirmPasswordVisible = !confirmPasswordVisible }) {
+                        Icon(
+                            imageVector = if (confirmPasswordVisible) Icons.Default.Close else Icons.Default.RemoveRedEye,
+                            contentDescription = if (confirmPasswordVisible) "Hide password" else "Show password"
+                        )
+                    }
+                },
+                visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Password,
+                    imeAction = ImeAction.Done
+                ),
+                keyboardActions = KeyboardActions(
+                    onDone = {
+                        focusManager.clearFocus()
+                        // Optionally trigger form submission on Done
+                    }
+                ),
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isLoading,
+                isError = confirmPasswordError.isNotEmpty(),
+                supportingText = if (confirmPasswordError.isNotEmpty()) {
+                    { Text(confirmPasswordError) }
+                } else null,
+                shape = RoundedCornerShape(12.dp)
+            )
         }
+
 
         Spacer(modifier = Modifier.height(24.dp))
 
@@ -426,60 +424,51 @@ fun SignupScreen(navController: NavController) {
                             )
 
                             if (response.isSuccessful) {
-                                val signupResponse = response.body()
-                                if (signupResponse != null) {
-                                    responseMessage = "Account created successfully!"
+                                responseMessage = "Account created successfully! Logging in..."
+                                // Auto-login after successful signup
+                                kotlinx.coroutines.delay(1500) // Give user time to see success message
+                                val loginResponse = RetrofitInstance.api.login(
+                                    com.example.splitexpress.network.LoginRequest(email.trim(), password)
+                                )
 
-                                    // Auto-login after successful signup
-                                    kotlinx.coroutines.delay(1000)
-                                    val loginResponse = RetrofitInstance.api.login(
-                                        com.example.splitexpress.network.LoginRequest(email.trim(), password)
-                                    )
-
-                                    if (loginResponse.isSuccessful) {
-                                        val loginData = loginResponse.body()
-                                        if (loginData != null) {
-                                            TokenManager.saveToken(
-                                                context,
-                                                loginData.token,
-                                                loginData.refresh_token
-                                            )
-                                            TokenManager.saveUserData(context, loginData.user)
+                                if (loginResponse.isSuccessful) {
+                                    val loginData = loginResponse.body()
+                                    if (loginData != null) {
+                                        TokenManager.saveToken(
+                                            context,
+                                            loginData.token,
+                                            loginData.refresh_token
+                                        )
+                                        TokenManager.saveUserData(context, loginData.user)
+                                        navController.navigate("home") {
+                                            popUpTo("signup") { inclusive = true }
+                                            launchSingleTop = true
                                         }
                                     }
-
-                                    kotlinx.coroutines.delay(500)
-                                    navController.navigate("home") {
-                                        popUpTo("signup") { inclusive = true }
-                                    }
                                 } else {
-                                    responseMessage = "Account created but no data received"
+                                    responseMessage = "Account created, but auto-login failed. Please log in manually."
                                 }
                             } else {
                                 val errorBody = response.errorBody()?.string()
                                 responseMessage = when (response.code()) {
-                                    400 -> {
-                                        if (errorBody?.contains("Validation error") == true) {
-                                            "Please check all required fields"
-                                        } else {
-                                            "Invalid input data"
-                                        }
-                                    }
+                                    400 -> "Please check all required fields for errors."
                                     409 -> {
                                         if (errorBody?.contains("email") == true) {
-                                            "This email is already registered"
+                                            emailError = "This email is already registered"
+                                            "This email is already registered."
                                         } else if (errorBody?.contains("phone") == true) {
-                                            "This phone number is already registered"
+                                            phoneError = "This phone number is already registered"
+                                            "This phone number is already registered."
                                         } else {
-                                            "Email or phone already exists"
+                                            "An account with this email or phone already exists."
                                         }
                                     }
-                                    500 -> "Server error. Please try again later"
-                                    else -> "Signup failed: ${response.code()}"
+                                    500 -> "Server error. Please try again later."
+                                    else -> "Signup failed: An unknown error occurred."
                                 }
                             }
                         } catch (e: Exception) {
-                            responseMessage = "Network error: ${e.localizedMessage}"
+                            responseMessage = "Network error. Please check your connection."
                             Log.e("SignupScreen", "Signup error", e)
                         } finally {
                             isLoading = false
@@ -493,8 +482,7 @@ fun SignupScreen(navController: NavController) {
             enabled = !isLoading,
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary
+                containerColor = MaterialTheme.colorScheme.primary
             )
         ) {
             if (isLoading) {
@@ -503,12 +491,12 @@ fun SignupScreen(navController: NavController) {
                     horizontalArrangement = Arrangement.Center
                 ) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(24.dp),
                         color = MaterialTheme.colorScheme.onPrimary,
-                        strokeWidth = 2.dp
+                        strokeWidth = 3.dp
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Creating Account...", fontSize = 16.sp)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text("Creating Account...", fontSize = 16.sp, fontWeight = FontWeight.Medium)
                 }
             } else {
                 Text(
@@ -519,9 +507,21 @@ fun SignupScreen(navController: NavController) {
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        // Response Message
+        if (responseMessage.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(16.dp))
+            val isSuccess = responseMessage.contains("successfully")
+            Text(
+                text = responseMessage,
+                color = if (isSuccess) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
 
-        // Login Link
+        // Login Link (pushed to the bottom)
+        Spacer(modifier = Modifier.weight(1f))
         Row(
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -530,55 +530,21 @@ fun SignupScreen(navController: NavController) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium
             )
-            Spacer(modifier = Modifier.width(4.dp))
             TextButton(
                 onClick = {
-                    navController.navigate("login") {
-                        popUpTo("signup") { inclusive = true }
+                    if (!isLoading) {
+                        navController.navigate("login") {
+                            popUpTo("signup") { inclusive = true }
+                        }
                     }
-                },
-                enabled = !isLoading
+                }
             ) {
                 Text(
                     text = "Login",
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
                 )
             }
         }
-
-        // Response Message
-        if (responseMessage.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(16.dp))
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (responseMessage.contains("successfully")) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.errorContainer
-                    }
-                ),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = responseMessage,
-                        color = if (responseMessage.contains("successfully")) {
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.onErrorContainer
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
     }
 }

@@ -1,7 +1,9 @@
 package com.example.splitexpress.screens
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -44,6 +46,10 @@ import com.example.splitexpress.utils.TokenManager
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 // Enhanced data class with display formatting
 data class SettlementSummary(
@@ -540,72 +546,73 @@ fun TripsHeader(tripCount: Int) {
         }
     }
 }
-
+fun generateAvatarColor(text: String): Color {
+    val hash = text.hashCode()
+    val r = (hash and 0xFF0000 shr 16)
+    val g = (hash and 0x00FF00 shr 8)
+    val b = (hash and 0x0000FF)
+    // Use darker, more saturated colors for better contrast
+    return Color(r, g, b).copy(alpha = 1f)
+}
+@RequiresApi(Build.VERSION_CODES.O)
+fun formatDate1(dateString: String): String {
+    return try {
+        val instant = Instant.parse(dateString)
+        val localDateTime = LocalDateTime.ofInstant(instant, ZoneId.systemDefault())
+        val formatter = DateTimeFormatter.ofPattern("dd MMM yyyy")
+        localDateTime.format(formatter)
+    } catch (e: Exception) {
+        "Unknown Date"
+    }
+}
 @Composable
 fun ProfessionalTripCard(
     trip: Trip,
     onClick: () -> Unit
 ) {
+    val displayName = trip.trip_name?.takeIf { it.isNotBlank() } ?: "Unnamed Trip"
+    val avatarColor = generateAvatarColor(displayName)
+
     Card(
         onClick = onClick,
-        modifier = Modifier
-            .fillMaxWidth()
-            .shadow(1.dp, RoundedCornerShape(12.dp)),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Trip Icon
             Box(
                 modifier = Modifier
                     .size(48.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer),
+                    .background(avatarColor.copy(alpha = 0.2f)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    Icons.Default.Person,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.size(24.dp)
+                Text(
+                    text = displayName.take(1).uppercase(),
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = avatarColor
                 )
             }
-
             Spacer(modifier = Modifier.width(16.dp))
-
-            // Trip Info
             Column(modifier = Modifier.weight(1f)) {
-                val displayName = when {
-                    !trip.trip_name.isNullOrBlank() -> trip.trip_name
-                    !trip.trip_id.isNullOrBlank() -> "Trip ${trip.trip_id.takeLast(6)}"
-                    else -> "Unnamed Trip"
-                }
-
                 Text(
                     text = displayName,
                     fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-
-                Row(
-                    modifier = Modifier.padding(top = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        Icons.Default.Person,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.outline,
-                        modifier = Modifier.size(14.dp)
+                        Icons.Default.Person, contentDescription = "Members",
+                        tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
@@ -613,23 +620,20 @@ fun ProfessionalTripCard(
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.outline
                     )
-
-                    if (!trip.invite_code.isNullOrBlank()) {
+                    trip.created_at?.let {
                         Text(
-                            " • ${trip.invite_code.takeLast(6)}",
+                            " • ${formatDate1(it)}",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.outline
                         )
                     }
                 }
             }
-
-            // Arrow Icon
             Icon(
                 Icons.Default.KeyboardArrowRight,
                 contentDescription = "View details",
                 tint = MaterialTheme.colorScheme.outline,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(24.dp)
             )
         }
     }

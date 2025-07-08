@@ -16,7 +16,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -66,18 +65,12 @@ fun OTPLoginScreen(navController: NavController) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        MaterialTheme.colorScheme.surface,
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.1f)
-                    )
-                )
-            )
+            .background(MaterialTheme.colorScheme.surface) // Simplified background
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
     ) {
+        Spacer(Modifier.height(40.dp))
+
         // Header Section
         HeaderSection(
             isOtpSent = isOtpSent,
@@ -87,79 +80,38 @@ fun OTPLoginScreen(navController: NavController) {
 
         Spacer(modifier = Modifier.height(32.dp))
 
-        // Form Section
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        // --- UI REFACTORED: REMOVED WRAPPING CARD ---
+        // Form Section Contents
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+            // Email Input
+            EmailInputField(
+                email = email,
+                onEmailChange = { email = it },
+                enabled = !isOtpSent,
+                isError = errorMessage.contains("email", ignoreCase = true)
+            )
+
+            // OTP Input with Animation
+            slideTransition.AnimatedVisibility(
+                visible = { it },
+                enter = slideInVertically(
+                    initialOffsetY = { -40 },
+                    animationSpec = tween(400, easing = FastOutSlowInEasing)
+                ) + fadeIn(animationSpec = tween(400)),
+                exit = slideOutVertically(
+                    targetOffsetY = { -40 },
+                    animationSpec = tween(300)
+                ) + fadeOut(animationSpec = tween(300))
             ) {
-                // Email Input
-                EmailInputField(
-                    email = email,
-                    onEmailChange = { email = it },
-                    enabled = !isOtpSent,
-                    isError = errorMessage.contains("email", ignoreCase = true)
-                )
-
-                // OTP Input with Animation
-                slideTransition.AnimatedVisibility(
-                    visible = { it },
-                    enter = slideInVertically(
-                        initialOffsetY = { -40 },
-                        animationSpec = tween(400, easing = FastOutSlowInEasing)
-                    ) + fadeIn(animationSpec = tween(400)),
-                    exit = slideOutVertically(
-                        targetOffsetY = { -40 },
-                        animationSpec = tween(300)
-                    ) + fadeOut(animationSpec = tween(300))
-                ) {
-                    OTPInputField(
-                        otp = otp,
-                        onOtpChange = { if (it.length <= 6) otp = it },
-                        isError = errorMessage.contains("OTP", ignoreCase = true),
-                        onDone = {
-                            keyboardController?.hide()
-                            if (otp.length == 6) {
-                                // Trigger OTP verification
-                            }
-                        }
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Messages Section
-                MessagesSection(
-                    errorMessage = errorMessage,
-                    successMessage = successMessage
-                )
-
-                // Action Button
-                ActionButton(
-                    isOtpSent = isOtpSent,
-                    isLoading = isLoading,
-                    onClick = {
-                        if (!isOtpSent) {
-                            handleSendOTP(
-                                email = email,
-                                coroutineScope = coroutineScope,
-                                onLoading = { isLoading = it },
-                                onError = { errorMessage = it },
-                                onSuccess = { message ->
-                                    successMessage = message
-                                    isOtpSent = true
-                                    errorMessage = ""
-                                    countdown = 60
-                                }
-                            )
-                        } else {
+                OTPInputField(
+                    otp = otp,
+                    onOtpChange = { if (it.length <= 6) otp = it },
+                    isError = errorMessage.contains("OTP", ignoreCase = true),
+                    onDone = {
+                        keyboardController?.hide()
+                        if (otp.length == 6) {
                             handleVerifyOTP(
                                 email = email,
                                 otp = otp,
@@ -172,43 +124,88 @@ fun OTPLoginScreen(navController: NavController) {
                         }
                     }
                 )
+            }
 
-                // Resend OTP Section
-                if (isOtpSent) {
-                    ResendOTPSection(
-                        countdown = countdown,
-                        onResend = {
-                            if (countdown == 0) {
-                                handleSendOTP(
-                                    email = email,
-                                    coroutineScope = coroutineScope,
-                                    onLoading = { isLoading = it },
-                                    onError = { errorMessage = it },
-                                    onSuccess = { message ->
-                                        successMessage = message
-                                        countdown = 60
-                                    }
-                                )
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Action Button
+            ActionButton(
+                isOtpSent = isOtpSent,
+                isLoading = isLoading,
+                onClick = {
+                    keyboardController?.hide()
+                    if (!isOtpSent) {
+                        handleSendOTP(
+                            email = email,
+                            coroutineScope = coroutineScope,
+                            onLoading = { isLoading = it },
+                            onError = { errorMessage = it },
+                            onSuccess = { message ->
+                                successMessage = message
+                                isOtpSent = true
+                                errorMessage = ""
+                                countdown = 60
                             }
-                        },
-                        onChangeEmail = {
-                            isOtpSent = false
-                            otp = ""
-                            errorMessage = ""
-                            successMessage = ""
-                            countdown = 0
-                        }
-                    )
+                        )
+                    } else {
+                        handleVerifyOTP(
+                            email = email,
+                            otp = otp,
+                            context = context,
+                            navController = navController,
+                            coroutineScope = coroutineScope,
+                            onLoading = { isLoading = it },
+                            onError = { errorMessage = it }
+                        )
+                    }
                 }
+            )
+
+            // Messages Section (Moved below the button)
+            MessagesSection(
+                errorMessage = errorMessage,
+                successMessage = successMessage
+            )
+
+            // Resend OTP Section
+            if (isOtpSent) {
+                ResendOTPSection(
+                    countdown = countdown,
+                    onResend = {
+                        if (countdown == 0) {
+                            handleSendOTP(
+                                email = email,
+                                coroutineScope = coroutineScope,
+                                onLoading = { isLoading = it },
+                                onError = { errorMessage = it },
+                                onSuccess = { message ->
+                                    successMessage = message
+                                    countdown = 60
+                                }
+                            )
+                        }
+                    },
+                    onChangeEmail = {
+                        isOtpSent = false
+                        otp = ""
+                        errorMessage = ""
+                        successMessage = ""
+                        countdown = 0
+                    }
+                )
             }
         }
 
-        Spacer(modifier = Modifier.height(32.dp))
+        // Push navigation options to the bottom
+        Spacer(modifier = Modifier.weight(1f))
 
         // Navigation Options
         NavigationOptions(navController = navController)
     }
 }
+
+
+// --- REFACTORED/UNCHANGED HELPER COMPOSABLES ---
 
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
@@ -220,21 +217,14 @@ private fun HeaderSection(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // App Logo/Icon
-        Surface(
-            modifier = Modifier.size(80.dp),
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.primaryContainer
-        ) {
-            Icon(
-                Icons.Default.Security,
-                contentDescription = "Security",
-                modifier = Modifier
-                    .size(48.dp)
-                    .alpha(titleAlpha),
-                tint = MaterialTheme.colorScheme.primary
-            )
-        }
+        Icon(
+            Icons.Filled.Security,
+            contentDescription = "Security",
+            modifier = Modifier
+                .size(64.dp)
+                .alpha(titleAlpha),
+            tint = MaterialTheme.colorScheme.primary
+        )
 
         Spacer(modifier = Modifier.height(24.dp))
 
@@ -242,7 +232,7 @@ private fun HeaderSection(
             text = "Secure Login",
             fontSize = 32.sp,
             fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.alpha(titleAlpha)
         )
 
@@ -251,9 +241,10 @@ private fun HeaderSection(
         AnimatedContent(
             targetState = isOtpSent,
             transitionSpec = {
-                slideInVertically { height -> height } + fadeIn() with
-                        slideOutVertically { height -> -height } + fadeOut()
-            }
+                (slideInVertically { height -> height } + fadeIn()).togetherWith(
+                    slideOutVertically { height -> -height } + fadeOut()
+                )
+            }, label = "headerTextAnimation"
         ) { otpSent ->
             if (otpSent) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -267,13 +258,13 @@ private fun HeaderSection(
                         text = email,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = MaterialTheme.colorScheme.onSurface,
                         textAlign = TextAlign.Center
                     )
                 }
             } else {
                 Text(
-                    text = "Enter your email address to receive a verification code",
+                    text = "Enter your email to receive a verification code",
                     fontSize = 16.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
@@ -294,20 +285,7 @@ private fun EmailInputField(
         value = email,
         onValueChange = onEmailChange,
         label = { Text("Email Address") },
-        leadingIcon = {
-            Icon(
-                Icons.Default.Email,
-                contentDescription = "Email",
-                tint = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-            )
-        },
-        trailingIcon = {
-            if (email.isNotEmpty() && enabled) {
-                IconButton(onClick = { onEmailChange("") }) {
-                    Icon(Icons.Default.Clear, contentDescription = "Clear")
-                }
-            }
-        },
+        leadingIcon = { Icon(Icons.Default.Email, contentDescription = "Email") },
         keyboardOptions = KeyboardOptions(
             keyboardType = KeyboardType.Email,
             imeAction = ImeAction.Next
@@ -315,11 +293,8 @@ private fun EmailInputField(
         modifier = Modifier.fillMaxWidth(),
         enabled = enabled,
         isError = isError,
-        shape = RoundedCornerShape(16.dp),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = MaterialTheme.colorScheme.primary,
-            unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
-        )
+        shape = RoundedCornerShape(12.dp),
+        singleLine = true
     )
 }
 
@@ -330,29 +305,15 @@ private fun OTPInputField(
     isError: Boolean,
     onDone: () -> Unit
 ) {
-    Column {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(modifier = Modifier.height(16.dp))
 
         OutlinedTextField(
             value = otp,
             onValueChange = onOtpChange,
             label = { Text("Verification Code") },
-            leadingIcon = {
-                Icon(
-                    Icons.Default.Lock,
-                    contentDescription = "OTP",
-                    tint = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                )
-            },
-            trailingIcon = {
-                if (otp.length == 6) {
-                    Icon(
-                        Icons.Default.CheckCircle,
-                        contentDescription = "Valid",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-            },
+            leadingIcon = { Icon(Icons.Default.Password, contentDescription = "OTP") },
+            placeholder = { Text("6-Digit Code") },
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Number,
                 imeAction = ImeAction.Done
@@ -360,83 +321,71 @@ private fun OTPInputField(
             keyboardActions = KeyboardActions(onDone = { onDone() }),
             modifier = Modifier.fillMaxWidth(),
             isError = isError,
-            shape = RoundedCornerShape(16.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
-            )
+            shape = RoundedCornerShape(12.dp)
         )
+
+        Spacer(modifier = Modifier.height(8.dp))
 
         // OTP Visual Indicators
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)
         ) {
             repeat(6) { index ->
+                val char = otp.getOrNull(index)?.toString() ?: ""
+                val isFocused = index == otp.length
+                val hasChar = index < otp.length
+
                 Box(
                     modifier = Modifier
-                        .size(12.dp)
-                        .clip(RoundedCornerShape(6.dp))
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(8.dp))
                         .background(
-                            if (index < otp.length)
-                                MaterialTheme.colorScheme.primary
-                            else
-                                MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                            if (hasChar) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                         )
-                )
+                        .border(
+                            width = 1.dp,
+                            color = if (isFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            shape = RoundedCornerShape(8.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = char,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
             }
         }
     }
 }
 
+// --- REFACTORED MessagesSection ---
 @Composable
 private fun MessagesSection(
     errorMessage: String,
     successMessage: String
 ) {
+    val message = errorMessage.ifEmpty { successMessage }
+    val isError = errorMessage.isNotEmpty()
+
     AnimatedVisibility(
-        visible = errorMessage.isNotEmpty() || successMessage.isNotEmpty(),
-        enter = slideInVertically() + fadeIn(),
-        exit = slideOutVertically() + fadeOut()
+        visible = message.isNotEmpty(),
+        enter = fadeIn(animationSpec = tween(200, 200)),
+        exit = fadeOut(animationSpec = tween(200))
     ) {
-        Card(
+        Text(
+            text = message,
+            color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = if (errorMessage.isNotEmpty())
-                    MaterialTheme.colorScheme.errorContainer
-                else
-                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
-            ),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Row(
-                modifier = Modifier.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    if (errorMessage.isNotEmpty()) Icons.Default.Error else Icons.Default.CheckCircle,
-                    contentDescription = null,
-                    tint = if (errorMessage.isNotEmpty())
-                        MaterialTheme.colorScheme.error
-                    else
-                        MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(
-                    text = errorMessage.ifEmpty { successMessage },
-                    color = if (errorMessage.isNotEmpty())
-                        MaterialTheme.colorScheme.error
-                    else
-                        MaterialTheme.colorScheme.primary,
-                    fontSize = 14.sp
-                )
-            }
-        }
+                .padding(top = 16.dp)
+        )
     }
 }
 
@@ -457,25 +406,21 @@ private fun ActionButton(
             containerColor = MaterialTheme.colorScheme.primary
         )
     ) {
-        if (isLoading) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(24.dp),
-                color = MaterialTheme.colorScheme.onPrimary,
-                strokeWidth = 2.dp
-            )
-        } else {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    if (isOtpSent) Icons.Default.VerifiedUser else Icons.Default.Send,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp)
+        AnimatedContent(
+            targetState = isLoading,
+            transitionSpec = {
+                fadeIn(animationSpec = tween(220, 90)).togetherWith(fadeOut(animationSpec = tween(90)))
+            }, label = "buttonStateAnimation"
+        ) { loading ->
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp),
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    strokeWidth = 3.dp
                 )
-                Spacer(modifier = Modifier.width(8.dp))
+            } else {
                 Text(
-                    text = if (isOtpSent) "Verify Code" else "Send Code",
+                    text = if (isOtpSent) "Verify & Login" else "Send Code",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium
                 )
@@ -491,23 +436,19 @@ private fun ResendOTPSection(
     onChangeEmail: () -> Unit
 ) {
     Column(
-        modifier = Modifier.padding(top = 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        modifier = Modifier.padding(top = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        if (countdown > 0) {
+        val canResend = countdown == 0
+        TextButton(onClick = onResend, enabled = canResend) {
             Text(
-                text = "Resend code in ${countdown}s",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 14.sp
+                text = if (canResend) "Resend Code" else "Resend code in ${countdown}s",
+                fontWeight = FontWeight.Medium
             )
-        } else {
-            TextButton(onClick = onResend) {
-                Text("Resend Code", fontWeight = FontWeight.Medium)
-            }
         }
-
         TextButton(onClick = onChangeEmail) {
-            Text("Change Email Address")
+            Text("Change Email")
         }
     }
 }
@@ -515,9 +456,10 @@ private fun ResendOTPSection(
 @Composable
 private fun NavigationOptions(navController: NavController) {
     Row(
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        Text("Or login with", style = MaterialTheme.typography.bodyMedium)
         TextButton(
             onClick = {
                 navController.navigate("login") {
@@ -525,23 +467,12 @@ private fun NavigationOptions(navController: NavController) {
                 }
             }
         ) {
-            Text("Password Login")
-        }
-
-        Text(
-            text = "•",
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        TextButton(
-            onClick = { navController.navigate("signup") }
-        ) {
-            Text("Sign Up")
+            Text("Password", fontWeight = FontWeight.Bold)
         }
     }
 }
 
-// Helper functions
+// Helper functions (UNCHANGED)
 private fun handleSendOTP(
     email: String,
     coroutineScope: CoroutineScope,
@@ -549,12 +480,7 @@ private fun handleSendOTP(
     onError: (String) -> Unit,
     onSuccess: (String) -> Unit
 ) {
-    if (email.isBlank()) {
-        onError("Please enter your email address")
-        return
-    }
-
-    if (!android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+    if (email.isBlank() || !android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
         onError("Please enter a valid email address")
         return
     }
@@ -562,6 +488,7 @@ private fun handleSendOTP(
     coroutineScope.launch {
         onLoading(true)
         onError("")
+        onSuccess("")
 
         try {
             val response = RetrofitInstance.api.getOTP(
@@ -571,10 +498,10 @@ private fun handleSendOTP(
             if (response.isSuccessful && response.body() != null) {
                 onSuccess(response.body()!!.message)
             } else {
-                onError("Failed to send verification code. Please try again.")
+                onError("Failed to send code. User may not exist.")
             }
         } catch (e: Exception) {
-            onError("Network error: ${e.message}")
+            onError("Network error. Please check your connection.")
         } finally {
             onLoading(false)
         }
@@ -615,15 +542,17 @@ private fun handleVerifyOTP(
                     loginResponse.token,
                     loginResponse.refresh_token
                 )
+                TokenManager.saveUserData(context, loginResponse.user)
 
                 navController.navigate("home") {
-                    popUpTo("login") { inclusive = true }
+                    popUpTo("otplogin") { inclusive = true }
+                    launchSingleTop = true
                 }
             } else {
                 onError("Invalid verification code. Please try again.")
             }
         } catch (e: Exception) {
-            onError("Network error: ${e.message}")
+            onError("Network error. Please check your connection.")
         } finally {
             onLoading(false)
         }
