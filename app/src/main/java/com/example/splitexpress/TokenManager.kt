@@ -71,5 +71,9 @@ object TokenManager {
             "${firstName}_${lastName}"
         } else null
     }
+    fun getUserId(context: Context): String? {
+        val sharedPref = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return sharedPref.getString("user_id", null)
+    }
 }
 

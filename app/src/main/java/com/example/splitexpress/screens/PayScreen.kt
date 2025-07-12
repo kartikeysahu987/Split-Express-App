@@ -3,8 +3,6 @@ package com.example.splitexpress.screens
 import android.util.Log
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -15,6 +13,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,10 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,12 +30,10 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
-//import androidx.compose.ui.text.style.TextForegroundStyle.Unspecified.alpha
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
@@ -56,7 +50,7 @@ fun PayScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // State variables (keeping original logic)
+    // State variables (original logic is untouched)
     var tripDetails by remember { mutableStateOf<Trip?>(null) }
     var allMembers by remember { mutableStateOf<List<String>>(emptyList()) }
     var freeMembers by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -76,28 +70,21 @@ fun PayScreen(
     var includeCurrentUser by remember { mutableStateOf(true) }
 
     // Enhanced animations
-    val screenTransition = remember { Animatable(0f) }
     val contentAlpha by animateFloatAsState(
-        targetValue = if (isLoading) 0.3f else 1f,
-        animationSpec = tween(800, easing = FastOutSlowInEasing)
+        targetValue = if (isLoading) 0f else 1f,
+        animationSpec = tween(500)
     )
     val buttonScale by animateFloatAsState(
-        targetValue = if (isProcessing) 0.96f else 1f,
+        targetValue = if (isProcessing) 0.95f else 1f,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessLow
         )
     )
 
-    LaunchedEffect(Unit) {
-        screenTransition.animateTo(
-            targetValue = 1f,
-            animationSpec = tween(1000, easing = FastOutSlowInEasing)
-        )
-    }
-
     // Original data loading logic remains the same
-    LaunchedEffect(tripId) {
+    LaunchedEffect(tripId, isLoading) {
+        if (!isLoading) return@LaunchedEffect // Prevent re-triggering on config changes
         Log.d("PayScreen", "Loading data for trip: $tripId")
         try {
             val token = TokenManager.getToken(context)
@@ -107,47 +94,45 @@ fun PayScreen(
                 return@LaunchedEffect
             }
 
-            try {
-                val casualNameResponse = RetrofitInstance.api.getCasualNameByUID(
-                    token = token,
-                    request = GetCasualNameRequest(trip_id = tripId)
-                )
-                if (casualNameResponse.isSuccessful) {
-                    currentUserName = casualNameResponse.body()?.casual_name
+            // Using coroutine supervisorScope to let them run concurrently and handle errors gracefully
+            kotlinx.coroutines.coroutineScope {
+                val casualNameJob = launch {
+                    try {
+                        val casualNameResponse = RetrofitInstance.api.getCasualNameByUID(token = token, request = GetCasualNameRequest(trip_id = tripId))
+                        if (casualNameResponse.isSuccessful) currentUserName = casualNameResponse.body()?.casual_name
+                    } catch (e: Exception) { Log.e("PayScreen", "Error getting casual name", e) }
                 }
-            } catch (e: Exception) {
-                Log.e("PayScreen", "Error getting casual name", e)
+
+                val tripsJob = launch {
+                    try {
+                        val myTripsResponse = RetrofitInstance.api.getAllMyTrips(token)
+                        if (myTripsResponse.isSuccessful) {
+                            tripDetails = myTripsResponse.body()?.user_items?.find { it.trip_id == tripId }
+                        }
+                    } catch (e: Exception) { Log.e("PayScreen", "Error getting trip details", e) }
+                }
+
+                casualNameJob.join()
+                tripsJob.join()
             }
 
-            try {
-                val myTripsResponse = RetrofitInstance.api.getAllMyTrips(token)
-                if (myTripsResponse.isSuccessful) {
-                    val userTrips = myTripsResponse.body()?.user_items ?: emptyList()
-                    tripDetails = userTrips.find { it.trip_id == tripId }
-                }
-            } catch (e: Exception) {
-                Log.e("PayScreen", "Error getting trip details", e)
-            }
 
             tripDetails?.invite_code?.let { inviteCode ->
                 try {
-                    val membersResponse = RetrofitInstance.api.getMembers(
-                        token = token,
-                        request = GetMembersRequest(invite_code = inviteCode)
-                    )
+                    val membersResponse = RetrofitInstance.api.getMembers(token = token, request = GetMembersRequest(invite_code = inviteCode))
                     if (membersResponse.isSuccessful) {
                         val membersData = membersResponse.body()
                         freeMembers = membersData?.free_members ?: emptyList()
                         notFreeMembers = membersData?.not_free_members ?: emptyList()
                         allMembers = (freeMembers + notFreeMembers).filter { it != currentUserName }
                     } else {
-                        errorMessage = "Failed to load members"
+                        errorMessage = "Failed to load members: ${membersResponse.message()}"
                     }
                 } catch (e: Exception) {
-                    errorMessage = "Network error: ${e.message}"
+                    errorMessage = "Network error while getting members: ${e.message}"
                 }
             } ?: run {
-                errorMessage = "Trip not found"
+                if (errorMessage == null) errorMessage = "Trip details not found or invite code is missing"
             }
         } catch (e: Exception) {
             errorMessage = "Failed to load data: ${e.message}"
@@ -156,13 +141,13 @@ fun PayScreen(
         }
     }
 
-    // Payment submission logic (keeping original)
-    // Replace your existing submitPayment() function with this complete version
+
+    // Payment submission logic (untouched)
     fun submitPayment() {
         when (splitMode) {
             "individual" -> {
                 if (selectedMember.isNullOrBlank() || amount.isBlank() || amount.toDoubleOrNull() == null || amount.toDouble() <= 0) {
-                    errorMessage = "Please select member and enter valid amount"
+                    errorMessage = "Please select a member and enter a valid amount."
                     return
                 }
 
@@ -199,7 +184,7 @@ fun PayScreen(
 
             "equal" -> {
                 if (selectedMembers.isEmpty() || amount.isBlank() || amount.toDoubleOrNull() == null || amount.toDouble() <= 0) {
-                    errorMessage = "Please select members and enter valid amount"
+                    errorMessage = "Please select members and enter a valid total amount."
                     return
                 }
 
@@ -213,9 +198,7 @@ fun PayScreen(
                         val amountPerPerson = totalAmount / totalPeople
 
                         var successCount = 0
-                        var failureCount = 0
 
-                        // Send payments to selected members
                         for (member in selectedMembers) {
                             try {
                                 val payRequest = PayRequest(
@@ -223,28 +206,22 @@ fun PayScreen(
                                     payer_name = currentUserName!!,
                                     reciever_name = member,
                                     amount = String.format("%.2f", amountPerPerson),
-                                    description = description.ifBlank { "Equal split payment" }
+                                    description = description.ifBlank { "Equally split expense" }
                                 )
                                 val response = RetrofitInstance.api.pay(token = token.toString(), request = payRequest)
-                                if (response.isSuccessful) {
-                                    successCount++
-                                } else {
-                                    failureCount++
-                                }
-                            } catch (e: Exception) {
-                                failureCount++
-                            }
+                                if (response.isSuccessful) successCount++
+                            } catch (e: Exception) { /* A single failure shouldn't stop others */ }
                         }
 
                         if (successCount > 0) {
-                            successMessage = "Split payment successful! ($successCount/${selectedMembers.size} payments sent)"
+                            successMessage = "Split payment sent to $successCount member(s)."
                             selectedMembers = emptySet()
                             amount = ""
                             description = ""
                             kotlinx.coroutines.delay(2000)
                             navController.popBackStack()
                         } else {
-                            errorMessage = "All payments failed"
+                            errorMessage = "All split payments failed."
                         }
                     } catch (e: Exception) {
                         errorMessage = "Split payment failed: ${e.message}"
@@ -257,9 +234,9 @@ fun PayScreen(
             "custom" -> {
                 if (selectedMembers.isEmpty() || !selectedMembers.any { member ->
                         val memberAmount = individualAmounts[member]
-                        memberAmount != null && memberAmount.isNotBlank() && memberAmount.toDoubleOrNull() != null && memberAmount.toDouble() > 0
+                        memberAmount != null && memberAmount.isNotBlank() && memberAmount.toDoubleOrNull()?.let { it > 0 } == true
                     }) {
-                    errorMessage = "Please select members and enter valid amounts"
+                    errorMessage = "Please select members and enter at least one valid amount."
                     return
                 }
 
@@ -269,28 +246,21 @@ fun PayScreen(
                     try {
                         val token = TokenManager.getToken(context)
                         var successCount = 0
-                        var failureCount = 0
 
                         for (member in selectedMembers) {
                             val memberAmount = individualAmounts[member]
-                            if (memberAmount != null && memberAmount.isNotBlank() && memberAmount.toDoubleOrNull() != null && memberAmount.toDouble() > 0) {
+                            if (memberAmount != null && memberAmount.isNotBlank() && memberAmount.toDoubleOrNull()?.let { it > 0 } == true) {
                                 try {
                                     val payRequest = PayRequest(
                                         trip_id = tripId,
                                         payer_name = currentUserName!!,
                                         reciever_name = member,
                                         amount = memberAmount,
-                                        description = description.ifBlank { "Custom split payment" }
+                                        description = description.ifBlank { "Custom split expense" }
                                     )
                                     val response = RetrofitInstance.api.pay(token = token.toString(), request = payRequest)
-                                    if (response.isSuccessful) {
-                                        successCount++
-                                    } else {
-                                        failureCount++
-                                    }
-                                } catch (e: Exception) {
-                                    failureCount++
-                                }
+                                    if (response.isSuccessful) successCount++
+                                } catch (e: Exception) { /* A single failure shouldn't stop others */ }
                             }
                         }
 
@@ -302,7 +272,7 @@ fun PayScreen(
                             kotlinx.coroutines.delay(2000)
                             navController.popBackStack()
                         } else {
-                            errorMessage = "All payments failed"
+                            errorMessage = "All custom payments failed."
                         }
                     } catch (e: Exception) {
                         errorMessage = "Custom split failed: ${e.message}"
@@ -316,53 +286,33 @@ fun PayScreen(
 
     Scaffold(
         topBar = {
-            ModernTopBar(
-                title = "Make Payment",
-                onBackClick = { navController.popBackStack() }
-            )
+            ModernTopBar(title = "Add Expense", onBackClick = { navController.popBackStack() })
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { paddingValues ->
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .graphicsLayer {
-                    alpha = contentAlpha
-                    translationY = (1f - screenTransition.value) * 50f
-                }
+            modifier = Modifier.fillMaxSize().padding(paddingValues).alpha(contentAlpha)
         ) {
             when {
                 isLoading -> ModernLoadingScreen()
-                errorMessage != null && allMembers.isEmpty() -> {
+                errorMessage != null && tripDetails == null -> {
                     ModernErrorScreen(
                         message = errorMessage!!,
                         onRetry = {
-                            isLoading = true
                             errorMessage = null
+                            isLoading = true
                         }
                     )
                 }
                 else -> {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(24.dp),
-                        verticalArrangement = Arrangement.spacedBy(20.dp)
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         item {
-                            AnimatedVisibility(
-                                visible = tripDetails != null,
-                                enter = slideInVertically(
-                                    initialOffsetY = { -it },
-                                    animationSpec = tween(600, delayMillis = 200)
-                                ) + fadeIn(tween(600, delayMillis = 200))
-                            ) {
-                                tripDetails?.let { trip ->
-                                    ModernTripCard(
-                                        trip = trip,
-                                        memberCount = allMembers.size + 1
-                                    )
-                                }
+                            tripDetails?.let {
+                                ModernTripCard(trip = it, memberCount = allMembers.size + 1)
                             }
                         }
 
@@ -371,70 +321,67 @@ fun PayScreen(
                                 selectedMode = splitMode,
                                 onModeChanged = { mode ->
                                     splitMode = mode
-                                    selectedMember = null
-                                    selectedMembers = emptySet()
-                                    individualAmounts = emptyMap()
-                                    amount = ""
-                                    errorMessage = null
+                                    errorMessage = null // Clear error on mode switch
                                 }
                             )
                         }
 
                         item {
-                            ModernPaymentForm(
-                                splitMode = splitMode,
-                                selectedMember = selectedMember,
-                                amount = amount,
-                                description = description,
-                                allMembers = allMembers,
-                                selectedMembers = selectedMembers,
-                                individualAmounts = individualAmounts,
-                                includeCurrentUser = includeCurrentUser,
-                                onMemberClick = { showMemberSelection = true },
-                                onAmountChange = { amount = it },
-                                onDescriptionChange = { description = it },
-                                onMemberSelectionChange = { selectedMembers = it },
-                                onIndividualAmountChange = { individualAmounts = it },
-                                onIncludeCurrentUserChange = { includeCurrentUser = it },
-                                modifier = Modifier.scale(buttonScale)
-                            )
-                        }
-
-                        errorMessage?.let { message ->
-                            item {
-                                ModernMessageCard(
-                                    message = message,
-                                    isError = true,
-                                    onDismiss = { errorMessage = null }
-                                )
+                            Card(
+                                modifier = Modifier.fillMaxWidth().animateContentSize(),
+                                shape = RoundedCornerShape(20.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    ModernPaymentForm(
+                                        splitMode = splitMode,
+                                        selectedMember = selectedMember,
+                                        amount = amount,
+                                        description = description,
+                                        allMembers = allMembers,
+                                        selectedMembers = selectedMembers,
+                                        individualAmounts = individualAmounts,
+                                        includeCurrentUser = includeCurrentUser,
+                                        onMemberClick = { showMemberSelection = true },
+                                        onAmountChange = { amount = it },
+                                        onDescriptionChange = { description = it },
+                                        onMemberSelectionChange = { selectedMembers = it },
+                                        onIndividualAmountChange = { individualAmounts = it },
+                                        onIncludeCurrentUserChange = { includeCurrentUser = it }
+                                    )
+                                }
                             }
                         }
 
-                        successMessage?.let { message ->
-                            item {
-                                ModernMessageCard(
-                                    message = message,
-                                    isError = false,
-                                    onDismiss = { successMessage = null }
-                                )
+                        // Success/Error Message display
+                        item {
+                            AnimatedVisibility(visible = errorMessage != null || successMessage != null) {
+                                Column {
+                                    errorMessage?.let { ModernMessageCard(message = it, isError = true, onDismiss = { errorMessage = null }) }
+                                    successMessage?.let { ModernMessageCard(message = it, isError = false, onDismiss = { successMessage = null }) }
+                                }
                             }
                         }
 
                         item {
                             ModernSubmitButton(
+                                modifier = Modifier.padding(top = 8.dp).scale(buttonScale),
                                 splitMode = splitMode,
                                 isProcessing = isProcessing,
                                 isEnabled = when (splitMode) {
-                                    "individual" -> selectedMember != null && amount.isNotBlank()
+                                    "individual" -> !selectedMember.isNullOrBlank() && amount.isNotBlank()
                                     "equal" -> selectedMembers.isNotEmpty() && amount.isNotBlank()
-                                    "custom" -> selectedMembers.isNotEmpty() && individualAmounts.any {
-                                        selectedMembers.contains(it.key) && it.value.isNotBlank()
-                                    }
+                                    "custom" -> selectedMembers.isNotEmpty() && individualAmounts.any { selectedMembers.contains(it.key) && it.value.isNotBlank() }
                                     else -> false
                                 },
                                 onClick = { submitPayment() }
                             )
                         }
+                        item { Spacer(modifier = Modifier.height(16.dp)) }
                     }
                 }
             }
@@ -443,8 +390,8 @@ fun PayScreen(
 
     if (showMemberSelection && allMembers.isNotEmpty()) {
         ModernMemberSelectionDialog(
-            freeMembers = freeMembers.filter { it != currentUserName },
-            notFreeMembers = notFreeMembers.filter { it != currentUserName },
+            freeMembers = freeMembers,
+            notFreeMembers = notFreeMembers,
             onMemberSelected = { member ->
                 selectedMember = member
                 showMemberSelection = false
@@ -455,124 +402,64 @@ fun PayScreen(
     }
 }
 
+
+// --- Production-Ready UI Components ---
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ModernTopBar(
-    title: String,
-    onBackClick: () -> Unit
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 4.dp
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 20.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(
-                onClick = onBackClick,
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "Back",
-                    tint = MaterialTheme.colorScheme.onSurface
-                )
-            }
-
-            Spacer(modifier = Modifier.width(16.dp))
-
+private fun ModernTopBar(title: String, onBackClick: () -> Unit) {
+    CenterAlignedTopAppBar(
+        title = {
             Text(
                 text = title,
-                style = MaterialTheme.typography.headlineSmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = (-0.5).sp
-                ),
-                color = MaterialTheme.colorScheme.onSurface
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleLarge
             )
-        }
-    }
+        },
+        navigationIcon = {
+            IconButton(onClick = onBackClick) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+            }
+        },
+        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+            containerColor = MaterialTheme.colorScheme.background
+        )
+    )
 }
 
 @Composable
-private fun ModernTripCard(
-    trip: Trip,
-    memberCount: Int
-) {
+private fun ModernTripCard(trip: Trip, memberCount: Int) {
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .animateContentSize(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-        ),
-        shape = RoundedCornerShape(20.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Row(
-            modifier = Modifier.padding(20.dp),
+            modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(CircleShape)
-                    .background(
-                        brush = androidx.compose.ui.graphics.Brush.radialGradient(
-                            colors = listOf(
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
-                                MaterialTheme.colorScheme.primary
-                            )
-                        )
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = trip.trip_name.firstOrNull()?.toString()?.uppercase() ?: "T",
-                    style = MaterialTheme.typography.headlineSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp
-                    ),
-                    color = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
+            Icon(
+                imageVector = Icons.Default.CardTravel,
+                contentDescription = "Trip",
+                modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape).padding(8.dp),
+                tint = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
                 Text(
                     text = trip.trip_name,
-                    style = MaterialTheme.typography.titleLarge.copy(
-                        fontWeight = FontWeight.Bold
-                    ),
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Person,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                    )
-
-                    Spacer(modifier = Modifier.width(4.dp))
-
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Group, contentDescription = null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                    Spacer(Modifier.width(4.dp))
                     Text(
                         text = "$memberCount members",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     )
                 }
             }
@@ -581,80 +468,36 @@ private fun ModernTripCard(
 }
 
 @Composable
-private fun ModernPaymentModeSelector(
-    selectedMode: String,
-    onModeChanged: (String) -> Unit
-) {
-    Column(
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+private fun ModernPaymentModeSelector(selectedMode: String, onModeChanged: (String) -> Unit) {
+    val modes = listOf("individual" to "Individual", "equal" to "Equal", "custom" to "Custom")
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Text(
-            text = "Payment Mode",
-            style = MaterialTheme.typography.titleMedium.copy(
-                fontWeight = FontWeight.SemiBold
-            ),
-            color = MaterialTheme.colorScheme.onSurface
-        )
-
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier.fillMaxWidth().padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            val modes = listOf(
-                "individual" to "Individual",
-                "equal" to "Split Equal",
-                "custom" to "Custom"
-            )
-
             modes.forEach { (mode, label) ->
-                ModernFilterChip(
-                    selected = selectedMode == mode,
+                Button(
                     onClick = { onModeChanged(mode) },
-                    label = label,
-                    modifier = Modifier.weight(1f)
-                )
+                    shape = RoundedCornerShape(8.dp),
+                    colors = if (selectedMode == mode) {
+                        ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    } else {
+                        ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = MaterialTheme.colorScheme.onSurfaceVariant)
+                    },
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    elevation = if (selectedMode == mode) ButtonDefaults.buttonElevation(defaultElevation = 2.dp) else null
+                ) {
+                    Text(label, fontWeight = FontWeight.SemiBold)
+                }
             }
         }
     }
 }
 
-@Composable
-private fun ModernFilterChip(
-    selected: Boolean,
-    onClick: () -> Unit,
-    label: String,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier
-            .height(48.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .clickable { onClick() },
-        color = if (selected) {
-            MaterialTheme.colorScheme.primary
-        } else {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
-        },
-        shadowElevation = if (selected) 8.dp else 2.dp
-    ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier.fillMaxSize()
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelLarge.copy(
-                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
-                ),
-                color = if (selected) {
-                    MaterialTheme.colorScheme.onPrimary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                }
-            )
-        }
-    }
-}
 
 @Composable
 private fun ModernPaymentForm(
@@ -672,259 +515,122 @@ private fun ModernPaymentForm(
     onMemberSelectionChange: (Set<String>) -> Unit,
     onIndividualAmountChange: (Map<String, String>) -> Unit,
     onIncludeCurrentUserChange: (Boolean) -> Unit,
-    modifier: Modifier = Modifier
 ) {
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .animateContentSize(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        shape = RoundedCornerShape(20.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
-        ) {
-            when (splitMode) {
-                "individual" -> {
-                    ModernMemberSelector(
-                        selectedMember = selectedMember,
-                        onMemberClick = onMemberClick
-                    )
+    // This component will now live inside a parent Card, so it's a Column.
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        AnimatedVisibility(visible = splitMode == "individual", enter = fadeIn(), exit = fadeOut()) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                ModernMemberSelector(selectedMember = selectedMember, onMemberClick = onMemberClick)
+                ModernAmountField(amount = amount, onAmountChange = onAmountChange, label = "Amount")
+            }
+        }
+        AnimatedVisibility(visible = splitMode == "equal", enter = fadeIn(), exit = fadeOut()) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                ModernSwitchRow(label = "Include myself in split", checked = includeCurrentUser, onCheckedChange = onIncludeCurrentUserChange)
+                ModernMemberSelectionList(members = allMembers, selectedMembers = selectedMembers, onSelectionChange = onMemberSelectionChange)
+                val totalAmount = amount.toDoubleOrNull() ?: 0.0
+                val totalPeople = selectedMembers.size + if (includeCurrentUser) 1 else 0
+                val supportingText = if (totalPeople > 0 && totalAmount > 0) "₹${"%.2f".format(totalAmount / totalPeople)} per person" else null
+                ModernAmountField(amount = amount, onAmountChange = onAmountChange, label = "Total Amount", supportingText = supportingText)
+            }
+        }
+        AnimatedVisibility(visible = splitMode == "custom", enter = fadeIn(), exit = fadeOut()) {
+            ModernCustomSplitList(
+                members = allMembers,
+                selectedMembers = selectedMembers,
+                individualAmounts = individualAmounts,
+                onMemberSelectionChange = onMemberSelectionChange,
+                onAmountChange = onIndividualAmountChange
+            )
+        }
 
-                    ModernAmountField(
-                        amount = amount,
-                        onAmountChange = onAmountChange,
-                        label = "Amount"
-                    )
-                }
+        ModernDescriptionField(description = description, onDescriptionChange = onDescriptionChange)
+    }
+}
 
-                "equal" -> {
-                    ModernSwitchRow(
-                        label = "Include myself in split",
-                        checked = includeCurrentUser,
-                        onCheckedChange = onIncludeCurrentUserChange
-                    )
-
-                    ModernMemberSelectionList(
-                        members = allMembers,
-                        selectedMembers = selectedMembers,
-                        onSelectionChange = onMemberSelectionChange
-                    )
-
-                    ModernAmountField(
-                        amount = amount,
-                        onAmountChange = onAmountChange,
-                        label = "Total Amount",
-                        supportingText = if (selectedMembers.isNotEmpty() && amount.isNotBlank()) {
-                            val totalAmount = amount.toDoubleOrNull() ?: 0.0
-                            val totalPeople = selectedMembers.size + if (includeCurrentUser) 1 else 0
-                            if (totalPeople > 0) {
-                                "₹${String.format("%.2f", totalAmount / totalPeople)} per person"
-                            } else null
-                        } else null
-                    )
-                }
-
-                "custom" -> {
-                    ModernCustomSplitList(
-                        members = allMembers,
-                        selectedMembers = selectedMembers,
-                        individualAmounts = individualAmounts,
-                        onMemberSelectionChange = onMemberSelectionChange,
-                        onAmountChange = onIndividualAmountChange
-                    )
+@Composable
+private fun ModernMemberSelector(selectedMember: String?, onMemberClick: () -> Unit) {
+    OutlinedTextField(
+        value = selectedMember ?: "",
+        onValueChange = {},
+        label = { Text("Pay To") },
+        placeholder = { Text("Select a member") },
+        readOnly = true,
+        modifier = Modifier.fillMaxWidth().clickable { onMemberClick() },
+        trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = "Select Member") },
+        interactionSource = remember { MutableInteractionSource() }.also { interactionSource ->
+            LaunchedEffect(interactionSource) {
+                interactionSource.interactions.collect {
+                    if (it is androidx.compose.foundation.interaction.PressInteraction.Release) {
+                        onMemberClick()
+                    }
                 }
             }
-
-            ModernDescriptionField(
-                description = description,
-                onDescriptionChange = onDescriptionChange
-            )
         }
-    }
-}
-
-@Composable
-private fun ModernMemberSelector(
-    selectedMember: String?,
-    onMemberClick: () -> Unit
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(56.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .clickable { onMemberClick() },
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-        border = BorderStroke(
-            width = 1.dp,
-            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = selectedMember ?: "Select member to pay",
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontWeight = if (selectedMember != null) FontWeight.Medium else FontWeight.Normal
-                ),
-                color = if (selectedMember != null) {
-                    MaterialTheme.colorScheme.onSurface
-                } else {
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                }
-            )
-
-            Icon(
-                imageVector = Icons.Default.Person,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary
-            )
-        }
-    }
-}
-
-@Composable
-private fun ModernAmountField(
-    amount: String,
-    onAmountChange: (String) -> Unit,
-    label: String,
-    supportingText: String? = null
-) {
-    Column(
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        OutlinedTextField(
-            value = amount,
-            onValueChange = onAmountChange,
-            label = { Text(label) },
-            prefix = {
-                Text(
-                    "₹",
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontWeight = FontWeight.Bold
-                    )
-                )
-            },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                focusedLabelColor = MaterialTheme.colorScheme.primary
-            )
-        )
-
-        supportingText?.let { text ->
-            Text(
-                text = text,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-        }
-    }
-}
-
-@Composable
-private fun ModernDescriptionField(
-    description: String,
-    onDescriptionChange: (String) -> Unit
-) {
-    OutlinedTextField(
-        value = description,
-        onValueChange = onDescriptionChange,
-        label = { Text("Description (Optional)") },
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        maxLines = 3,
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = MaterialTheme.colorScheme.primary,
-            focusedLabelColor = MaterialTheme.colorScheme.primary
-        )
     )
 }
 
 @Composable
-private fun ModernSwitchRow(
-    label: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(
+private fun ModernAmountField(amount: String, onAmountChange: (String) -> Unit, label: String, supportingText: String? = null) {
+    OutlinedTextField(
+        value = amount,
+        onValueChange = { onAmountChange(it.filter { char -> char.isDigit() || char == '.' }) },
+        label = { Text(label) },
+        prefix = { Text("₹ ", fontWeight = FontWeight.SemiBold) },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        supportingText = supportingText?.let { { Text(it, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold) } }
+    )
+}
+
+@Composable
+private fun ModernDescriptionField(description: String, onDescriptionChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = description,
+        onValueChange = onDescriptionChange,
+        label = { Text("Description (Optional)") },
+        leadingIcon = { Icon(Icons.Default.Notes, contentDescription = null) },
+        modifier = Modifier.fillMaxWidth(),
+        maxLines = 3,
+    )
+}
+
+@Composable
+private fun ModernSwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable { onCheckedChange(!checked) }.padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyLarge.copy(
-                fontWeight = FontWeight.Medium
-            ),
-            color = MaterialTheme.colorScheme.onSurface
-        )
-
+        Text(text = label, style = MaterialTheme.typography.bodyLarge)
         Switch(
             checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = MaterialTheme.colorScheme.primary,
-                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-            )
+            onCheckedChange = onCheckedChange
         )
     }
 }
 
 @Composable
-private fun ModernSubmitButton(
-    splitMode: String,
-    isProcessing: Boolean,
-    isEnabled: Boolean,
-    onClick: () -> Unit
-) {
+private fun ModernSubmitButton(modifier: Modifier = Modifier, splitMode: String, isProcessing: Boolean, isEnabled: Boolean, onClick: () -> Unit) {
+    val buttonText = when(splitMode) {
+        "individual" -> "Send Payment"
+        "equal" -> "Split Equally"
+        "custom" -> "Confirm Split"
+        else -> "Submit"
+    }
+
     Button(
         onClick = onClick,
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(56.dp),
+        modifier = modifier.fillMaxWidth().height(52.dp),
         enabled = isEnabled && !isProcessing,
-        colors = ButtonDefaults.buttonColors(
-            containerColor = MaterialTheme.colorScheme.primary,
-            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant
-        ),
-        shape = RoundedCornerShape(16.dp),
-        elevation = ButtonDefaults.buttonElevation(
-            defaultElevation = 8.dp,
-            pressedElevation = 12.dp
-        )
+        shape = RoundedCornerShape(16.dp)
     ) {
-        if (isProcessing) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(24.dp),
-                color = MaterialTheme.colorScheme.onPrimary,
-                strokeWidth = 2.dp
-            )
-        } else {
-            Text(
-                text = when (splitMode) {
-                    "individual" -> "Make Payment"
-                    "equal" -> "Split Payment"
-                    "custom" -> "Send Payments"
-                    else -> "Pay"
-                },
-                style = MaterialTheme.typography.titleMedium.copy(
-                    fontWeight = FontWeight.Bold
-                )
-            )
+        AnimatedVisibility(visible = isProcessing, enter = fadeIn(), exit = fadeOut()) {
+            CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+        }
+        AnimatedVisibility(visible = !isProcessing, enter = fadeIn(), exit = fadeOut()) {
+            Text(buttonText, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -932,215 +638,79 @@ private fun ModernSubmitButton(
 @Composable
 private fun ModernLoadingScreen() {
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+        modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(24.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(56.dp),
-                color = MaterialTheme.colorScheme.primary,
-                strokeWidth = 5.dp
-            )
-
-            Text(
-                text = "Loading payment details...",
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontWeight = FontWeight.Medium
-                ),
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-            )
+            CircularProgressIndicator()
+            Text("Preparing screen...", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
 @Composable
-private fun ModernErrorScreen(
-    message: String,
-    onRetry: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        contentAlignment = Alignment.Center
+private fun ModernErrorScreen(message: String, onRetry: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.errorContainer
-            ),
-            shape = RoundedCornerShape(20.dp),
-            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Warning,
-                    contentDescription = null,
-                    modifier = Modifier.size(64.dp),
-                    tint = MaterialTheme.colorScheme.onErrorContainer
-                )
-
-                Text(
-                    text = "Something went wrong",
-                    style = MaterialTheme.typography.headlineSmall.copy(
-                        fontWeight = FontWeight.Bold
-                    ),
-                    color = MaterialTheme.colorScheme.onErrorContainer
-                )
-
-                Text(
-                    text = message,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f),
-                    textAlign = TextAlign.Center
-                )
-
-                Button(
-                    onClick = onRetry,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error
-                    ),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text("Retry")
-                }
-            }
-        }
+        Icon(Icons.Default.CloudOff, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.error)
+        Spacer(Modifier.height(16.dp))
+        Text("An Error Occurred", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(8.dp))
+        Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(24.dp))
+        Button(onClick = onRetry) { Text("Try Again") }
     }
 }
 
 @Composable
-private fun ModernMessageCard(
-    message: String,
-    isError: Boolean,
-    onDismiss: () -> Unit
-) {
+private fun ModernMessageCard(message: String, isError: Boolean, onDismiss: () -> Unit) {
+    val backgroundColor = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
+    val contentColor = if (isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer
+    val icon = if (isError) Icons.Default.Warning else Icons.Default.CheckCircle
+
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .animateContentSize(),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isError) {
-                MaterialTheme.colorScheme.errorContainer
-            } else {
-                Color(0xFF4CAF50).copy(alpha = 0.15f)
-            }
-        ),
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        modifier = Modifier.fillMaxWidth().clickable { onDismiss() },
+        colors = CardDefaults.cardColors(containerColor = backgroundColor),
+        shape = RoundedCornerShape(12.dp)
     ) {
         Row(
             modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = if (isError) Icons.Default.Warning else Icons.Default.Check,
-                contentDescription = null,
-                tint = if (isError) {
-                    MaterialTheme.colorScheme.onErrorContainer
-                } else {
-                    Color(0xFF4CAF50)
-                }
-            )
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            Text(
-                text = message,
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = FontWeight.Medium
-                ),
-                color = if (isError) {
-                    MaterialTheme.colorScheme.onErrorContainer
-                } else {
-                    Color(0xFF4CAF50)
-                }
-            )
+            Icon(icon, contentDescription = null, tint = contentColor)
+            Spacer(Modifier.width(12.dp))
+            Text(text = message, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = contentColor, fontWeight = FontWeight.SemiBold)
         }
     }
 }
 
-// Add these functions at the end of your PayScreen.kt file, before the closing brace
-
 @Composable
-private fun ModernMemberSelectionList(
-    members: List<String>,
-    selectedMembers: Set<String>,
-    onSelectionChange: (Set<String>) -> Unit
-) {
-    Column(
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Text(
-            text = "Select Members",
-            style = MaterialTheme.typography.labelLarge.copy(
-                fontWeight = FontWeight.SemiBold
-            ),
-            color = MaterialTheme.colorScheme.onSurface
-        )
-
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-            ),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(12.dp)
+private fun ModernMemberSelectionList(members: List<String>, selectedMembers: Set<String>, onSelectionChange: (Set<String>) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Split with", style = MaterialTheme.typography.bodyLarge)
+        members.forEach { member ->
+            Row(
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable {
+                    val newSelection = if (selectedMembers.contains(member)) selectedMembers - member else selectedMembers + member
+                    onSelectionChange(newSelection)
+                }.padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                members.forEach { member ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable {
-                                val newSelection = if (selectedMembers.contains(member)) {
-                                    selectedMembers - member
-                                } else {
-                                    selectedMembers + member
-                                }
-                                onSelectionChange(newSelection)
-                            }
-                            .padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = selectedMembers.contains(member),
-                            onCheckedChange = { checked ->
-                                val newSelection = if (checked) {
-                                    selectedMembers + member
-                                } else {
-                                    selectedMembers - member
-                                }
-                                onSelectionChange(newSelection)
-                            },
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = MaterialTheme.colorScheme.primary
-                            )
-                        )
-
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        Text(
-                            text = member,
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                fontWeight = FontWeight.Medium
-                            ),
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                Checkbox(
+                    checked = selectedMembers.contains(member),
+                    onCheckedChange = { checked ->
+                        val newSelection = if (checked) selectedMembers + member else selectedMembers - member
+                        onSelectionChange(newSelection)
                     }
-                }
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(member, style = MaterialTheme.typography.bodyLarge)
             }
         }
     }
@@ -1154,98 +724,57 @@ private fun ModernCustomSplitList(
     onMemberSelectionChange: (Set<String>) -> Unit,
     onAmountChange: (Map<String, String>) -> Unit
 ) {
-    Column(
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text(
-            text = "Custom Split",
-            style = MaterialTheme.typography.labelLarge.copy(
-                fontWeight = FontWeight.SemiBold
-            ),
-            color = MaterialTheme.colorScheme.onSurface
-        )
-
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-            ),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        members.forEach { member ->
+            val isSelected = selectedMembers.contains(member)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                members.forEach { member ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = selectedMembers.contains(member),
-                            onCheckedChange = { checked ->
-                                val newSelection = if (checked) {
-                                    selectedMembers + member
-                                } else {
-                                    selectedMembers - member
-                                }
-                                onMemberSelectionChange(newSelection)
-                            },
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = MaterialTheme.colorScheme.primary
-                            )
-                        )
-
-                        Spacer(modifier = Modifier.width(8.dp))
-
-                        Text(
-                            text = member,
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                fontWeight = FontWeight.Medium
-                            ),
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-
-                        Spacer(modifier = Modifier.width(8.dp))
-
-                        OutlinedTextField(
-                            value = individualAmounts[member] ?: "",
-                            onValueChange = { newAmount ->
-                                val newAmounts = individualAmounts.toMutableMap()
-                                newAmounts[member] = newAmount
-                                onAmountChange(newAmounts)
-                            },
-                            label = { Text("Amount") },
-                            prefix = { Text("₹") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.width(120.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            enabled = selectedMembers.contains(member),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                focusedLabelColor = MaterialTheme.colorScheme.primary
-                            )
-                        )
+                Checkbox(
+                    checked = isSelected,
+                    onCheckedChange = { checked ->
+                        val newSelection = if (checked) selectedMembers + member else selectedMembers - member
+                        onMemberSelectionChange(newSelection)
                     }
-                }
+                )
+                Text(
+                    text = member,
+                    modifier = Modifier.weight(1f).padding(start = 8.dp),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if(isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+                Spacer(Modifier.width(8.dp))
+                OutlinedTextField(
+                    value = if(isSelected) individualAmounts[member] ?: "" else "",
+                    onValueChange = { newAmount ->
+                        val newAmounts = individualAmounts.toMutableMap()
+                        newAmounts[member] = newAmount.filter { it.isDigit() || it == '.' }
+                        onAmountChange(newAmounts)
+                    },
+                    prefix = { Text("₹ ") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.width(110.dp),
+                    enabled = isSelected,
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
             }
         }
 
-        // Show total amount
-        val totalAmount = individualAmounts.values.mapNotNull { it.toDoubleOrNull() }.sum()
-        if (totalAmount > 0) {
+        val totalAmount = individualAmounts.filterKeys { selectedMembers.contains(it) }.values.sumOf { it.toDoubleOrNull() ?: 0.0 }
+        AnimatedVisibility(visible = totalAmount > 0) {
             Text(
-                text = "Total: ₹${String.format("%.2f", totalAmount)}",
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = FontWeight.Bold
-                ),
+                text = "Total: ₹${"%.2f".format(totalAmount)}",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.align(Alignment.End)
+                modifier = Modifier.align(Alignment.End).padding(top = 8.dp)
             )
         }
     }
 }
+
 
 @Composable
 private fun ModernMemberSelectionDialog(
@@ -1256,141 +785,44 @@ private fun ModernMemberSelectionDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = "Select Member",
-                style = MaterialTheme.typography.headlineSmall.copy(
-                    fontWeight = FontWeight.Bold
-                )
-            )
-        },
+        title = { Text("Select Member", fontWeight = FontWeight.Bold) },
         text = {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // Show notFreeMembers as "Available Members" (already joined)
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (notFreeMembers.isNotEmpty()) {
-                    item {
-                        Text(
-                            text = "Available Members",
-                            style = MaterialTheme.typography.labelLarge.copy(
-                                fontWeight = FontWeight.SemiBold
-                            ),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-
-                    items(notFreeMembers) { member ->
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { onMemberSelected(member) },
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = member.firstOrNull()?.uppercase() ?: "?",
-                                        style = MaterialTheme.typography.titleMedium.copy(
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.width(12.dp))
-
-                                Text(
-                                    text = member,
-                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                        fontWeight = FontWeight.Medium
-                                    ),
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-                    }
+                    item { Text("Active Members", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(bottom = 4.dp)) }
+                    items(notFreeMembers) { MemberDialogItem(member = it, onClick = { onMemberSelected(it) }) }
                 }
-
-                // Show freeMembers as "May not be available" (not joined yet)
                 if (freeMembers.isNotEmpty()) {
-                    item {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Not Joined Yet",
-                            style = MaterialTheme.typography.labelLarge.copy(
-                                fontWeight = FontWeight.SemiBold
-                            ),
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-
-                    items(freeMembers) { member ->
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { onMemberSelected(member) },
-                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.error.copy(alpha = 0.2f)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = member.firstOrNull()?.uppercase() ?: "?",
-                                        style = MaterialTheme.typography.titleMedium.copy(
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        color = MaterialTheme.colorScheme.error
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.width(12.dp))
-
-                                Column {
-                                    Text(
-                                        text = member,
-                                        style = MaterialTheme.typography.bodyLarge.copy(
-                                            fontWeight = FontWeight.Medium
-                                        ),
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-
-                                    Text(
-                                        text = "Not joined yet",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.error
-                                    )
-                                }
-                            }
-                        }
-                    }
+                    item { Text("Pending Members (Not Joined)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)) }
+                    items(freeMembers) { MemberDialogItem(member = it, isPending = true, onClick = { onMemberSelected(it) }) }
                 }
             }
         },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        },
-        shape = RoundedCornerShape(20.dp)
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        shape = RoundedCornerShape(28.dp)
     )
+}
+
+@Composable
+private fun MemberDialogItem(member: String, isPending: Boolean = false, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        border = if (isPending) BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)) else null
+    ) {
+        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = member.firstOrNull()?.uppercase() ?: "?",
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            Spacer(Modifier.width(16.dp))
+            Text(member, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+        }
+    }
 }

@@ -95,6 +95,8 @@ data class Trip(
     val trip_name: String,
     val description: String?,
     val members: List<String>,
+    @SerializedName("is_deleted")
+    val isDeleted: Boolean?,
     val creator_id: String,
     val invite_code: String,
     val created_at: String
@@ -163,6 +165,8 @@ data class Transaction(
     val reciever_name: String,
     val amount: String,
     val description: String?,
+    @SerializedName("is_deleted")
+    val isDeleted: Boolean?,
     val type: String,
     val created_at: String
 )
@@ -237,6 +241,18 @@ data class AutomaticLinkMemberRequest(
     val uid: String
 )
 
+data class DeleteTripRequest(
+    val trip_id: String
+)
+
+data class DeleteTransactionRequest(
+    val trip_id: String,
+    val _id: String
+)
+
+data class DeleteResponse(
+    val message: String
+)
 // ---- RETROFIT SERVICE ----
 
 interface ApiService {
@@ -342,6 +358,19 @@ interface ApiService {
         @Header("token") token: String,
         @Body request: AutomaticLinkMemberRequest
     ): Response<LinkMemberResponse>
+
+
+    @POST("trip/deleteTrip")
+    suspend fun deleteTrip(
+        @Header("token") token: String,
+        @Body request: DeleteTripRequest
+    ): Response<DeleteResponse>
+
+    @POST("trip/deleteTransaction")
+    suspend fun deleteTransaction(
+        @Header("token") token: String,
+        @Body request: DeleteTransactionRequest
+    ): Response<DeleteResponse>
 }
 
 // ---- RETROFIT INSTANCE ----
@@ -361,7 +390,7 @@ object RetrofitInstance {
         .retryOnConnectionFailure(true)            // Retry on connection failure
         .build()
     //    private const val BASE_URL = "https://split-go.onrender.com/"
-    private const val BASE_URL = "https://032w6y28pi.execute-api.ap-south-1.amazonaws.com/"
+        private const val BASE_URL = "https://032w6y28pi.execute-api.ap-south-1.amazonaws.com/"
 
     val api: ApiService by lazy {
         Retrofit.Builder()

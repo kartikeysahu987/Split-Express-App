@@ -1,3 +1,4 @@
+
 package com.example.splitexpress.screens
 
 import android.content.Context
@@ -12,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AccountBox
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
@@ -20,16 +22,13 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.Add
-//import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -38,14 +37,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
-import com.example.splitexpress.network.RetrofitInstance
-import com.example.splitexpress.network.Trip
+import com.example.splitexpress.network.DeleteTripRequest
 import com.example.splitexpress.network.GetSettlementsRequest
+import com.example.splitexpress.network.RetrofitInstance
 import com.example.splitexpress.network.Settlement
+import com.example.splitexpress.network.Trip
 import com.example.splitexpress.utils.TokenManager
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -61,151 +63,267 @@ data class SettlementSummary(
     val formattedAmount: String = "₹${String.format("%.2f", kotlin.math.abs(netAmount))}"
 )
 
+@RequiresApi(Build.VERSION_CODES.O)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(navController: NavController) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     var trips by remember { mutableStateOf<List<Trip>>(emptyList()) }
     var settlementSummaries by remember { mutableStateOf<List<SettlementSummary>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Load data
-    LaunchedEffect(Unit) {
-        Log.d("HomeScreen", "Loading data...")
+    // State for delete confirmation
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var tripToDelete by remember { mutableStateOf<Trip?>(null) }
+    var isDeleting by remember { mutableStateOf(false) }
 
+    // Function to filter active trips (not deleted)
+    fun getActiveTrips(allTrips: List<Trip>): List<Trip> {
+        return allTrips.filter { trip ->
+            // Filter out deleted trips - check both isDeleted flag and null safety
+            trip.isDeleted != true
+        }.sortedByDescending { it.created_at }
+    }
+
+    suspend fun updateSettlements(currentTrips: List<Trip>) {
+        val rawToken = TokenManager.getToken(context) ?: return
         try {
-            val rawToken = TokenManager.getToken(context)
+            // Only calculate settlements for active (non-deleted) trips
+            val activeTrips = getActiveTrips(currentTrips)
 
-            if (rawToken.isNullOrBlank()) {
-                errorMessage = "Authentication required. Please log in again."
-                isLoading = false
-                return@LaunchedEffect
+            if (activeTrips.isEmpty()) {
+                settlementSummaries = emptyList()
+                return
             }
 
-            val response = RetrofitInstance.api.getAllMyTrips(rawToken)
-
-            if (response.isSuccessful) {
-                val sortedTrips = response.body()?.user_items?.sortedByDescending {
-                    it.created_at
-                } ?: emptyList()
-
-
-                trips = sortedTrips
-
-                // Load settlements concurrently
-                val settlementTasks = trips.map { trip ->
+            coroutineScope {
+                val settlementTasks = activeTrips.map { trip ->
                     async {
                         try {
                             val settlementResponse = RetrofitInstance.api.getSettlements(
                                 token = rawToken,
-                                request = GetSettlementsRequest(trip.trip_id ?: "")
+                                request = GetSettlementsRequest(trip.trip_id)
                             )
-
                             if (settlementResponse.isSuccessful) {
                                 settlementResponse.body()?.settlements ?: emptyList()
                             } else {
+                                Log.w("GetSettlements", "Failed for trip ${trip.trip_id}: ${settlementResponse.message()}")
                                 emptyList<Settlement>()
                             }
                         } catch (e: Exception) {
+                            Log.e("GetSettlements", "Failed for trip ${trip.trip_id}: ${e.message}")
                             emptyList<Settlement>()
                         }
                     }
                 }
-
                 val allSettlements = settlementTasks.awaitAll().flatten()
                 settlementSummaries = processSettlements(allSettlements, context)
+            }
+        } catch (e: Exception) {
+            Log.e("UpdateSettlements", "Error recalculating settlements: ${e.message}")
+            settlementSummaries = emptyList()
+        }
+    }
 
+    // Function to refresh all data
+    suspend fun refreshData() {
+        try {
+            val rawToken = TokenManager.getToken(context)
+            if (rawToken.isNullOrBlank()) {
+                errorMessage = "Authentication required. Please log in again."
+                return
+            }
+
+            val response = RetrofitInstance.api.getAllMyTrips(rawToken)
+            if (response.isSuccessful) {
+                val allTrips = response.body()?.user_items ?: emptyList()
+                val activeTrips = getActiveTrips(allTrips)
+
+                trips = activeTrips
+                updateSettlements(activeTrips)
+                errorMessage = null
             } else {
                 errorMessage = "Unable to load your trips. Please try again."
+                Log.e("RefreshData", "API Error: ${response.code()} - ${response.message()}")
             }
         } catch (e: Exception) {
             errorMessage = "Connection error. Please check your internet and try again."
-        } finally {
-            delay(300)
-            isLoading = false
+            Log.e("RefreshData", "Exception: ${e.message}")
         }
+    }
+
+    // Load data on screen launch
+    LaunchedEffect(Unit) {
+        Log.d("HomeScreen", "Loading data...")
+        isLoading = true
+        refreshData()
+        delay(300)
+        isLoading = false
     }
 
     Scaffold(
         topBar = {
-            CompactTopBar(
-                onLogout = {
-                    TokenManager.clearTokens(context)
-                    navController.navigate("login") {
-                        popUpTo("home") { inclusive = true }
-                    }
-                }
-            )
+            CompactTopBar(onLogout = {
+                TokenManager.clearTokens(context)
+                navController.navigate("login") { popUpTo("home") { inclusive = true } }
+            })
         },
         floatingActionButton = {
-            EnhancedFAB(
-                onClick = { navController.navigate("createtrip") }
-            )
+            EnhancedFAB(onClick = { navController.navigate("createtrip") })
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = MaterialTheme.colorScheme.background
     ) { paddingValues ->
-
         if (isLoading) {
             LoadingScreen()
         } else {
             LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues),
+                modifier = Modifier.fillMaxSize().padding(paddingValues),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // Quick Actions Section
-                item {
-                    QuickActionsSection(navController)
-                }
+                item { QuickActionsSection(navController) }
 
-                // Settlement Overview (if available)
+                // Settlement Overview (only if there are active trips with settlements)
                 if (settlementSummaries.isNotEmpty()) {
-                    item {
-                        FinancialOverview(settlementSummaries)
-                    }
+                    item { FinancialOverview(settlementSummaries) }
                 }
 
                 // Trips Section
-                item {
-                    TripsHeader(tripCount = trips.size)
-                }
+                item { TripsHeader(tripCount = trips.size) }
 
                 // Handle different states
                 when {
                     errorMessage != null -> {
                         item {
                             ErrorStateCard(errorMessage!!) {
-                                isLoading = true
-                                errorMessage = null
+                                scope.launch {
+                                    isLoading = true
+                                    refreshData()
+                                    isLoading = false
+                                }
                             }
                         }
                     }
                     trips.isEmpty() -> {
-                        item {
-                            EmptyTripsCard(navController)
-                        }
+                        item { EmptyTripsCard(navController) }
                     }
                     else -> {
-                        items(trips) { trip ->
+                        val currentUserId = TokenManager.getUserId(context) ?: ""
+                        items(trips, key = { it.trip_id }) { trip ->
                             ProfessionalTripCard(
                                 trip = trip,
-                                onClick = { navController.navigate("tripDetails/${trip.trip_id}") }
+                                currentUserId = currentUserId,
+                                onClick = { navController.navigate("tripDetails/${trip.trip_id}") },
+                                onDeleteClick = {
+                                    tripToDelete = trip
+                                    showDeleteDialog = true
+                                }
                             )
                         }
                     }
                 }
-
                 // Bottom spacing for FAB
-                item {
-                    Spacer(modifier = Modifier.height(80.dp))
-                }
+                item { Spacer(modifier = Modifier.height(80.dp)) }
             }
         }
+
+        // Delete confirmation dialog
+        if (showDeleteDialog && tripToDelete != null) {
+            DeleteConfirmationDialog(
+                tripName = tripToDelete?.trip_name ?: "this trip",
+                isDeleting = isDeleting,
+                onDismiss = {
+                    showDeleteDialog = false
+                    tripToDelete = null
+                },
+                onConfirm = {
+                    scope.launch {
+                        isDeleting = true
+                        val token = TokenManager.getToken(context)
+                        if (token.isNullOrBlank() || tripToDelete == null) {
+                            snackbarHostState.showSnackbar("Authentication error. Please log in again.")
+                            isDeleting = false
+                            showDeleteDialog = false
+                            return@launch
+                        }
+
+                        try {
+                            val response = RetrofitInstance.api.deleteTrip(
+                                token = token,
+                                request = DeleteTripRequest(trip_id = tripToDelete!!.trip_id)
+                            )
+                            if (response.isSuccessful) {
+                                // Remove the deleted trip from the current list
+                                val updatedTrips = trips.filterNot { it.trip_id == tripToDelete!!.trip_id }
+                                trips = updatedTrips
+
+                                // Recalculate settlements without the deleted trip
+                                updateSettlements(updatedTrips)
+
+                                snackbarHostState.showSnackbar(
+                                    response.body()?.message ?: "Trip deleted successfully"
+                                )
+                                Log.d("DeleteTrip", "Trip ${tripToDelete!!.trip_id} deleted successfully")
+                            } else {
+                                val errorBody = response.errorBody()?.string() ?: "Unknown error"
+                                Log.e("DeleteTrip", "Error: ${response.code()} - $errorBody")
+                                snackbarHostState.showSnackbar("Failed to delete trip. You might not be the creator.")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("DeleteTrip", "Exception: ${e.message}")
+                            snackbarHostState.showSnackbar("An error occurred: ${e.message}")
+                        } finally {
+                            isDeleting = false
+                            showDeleteDialog = false
+                            tripToDelete = null
+                        }
+                    }
+                }
+            )
+        }
     }
+}
+
+@Composable
+fun DeleteConfirmationDialog(
+    tripName: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+    isDeleting: Boolean
+) {
+    AlertDialog(
+        onDismissRequest = { if (!isDeleting) onDismiss() },
+        title = { Text("Delete Trip", fontWeight = FontWeight.Bold) },
+        text = { Text("Are you sure you want to permanently delete the trip \"$tripName\"? This action cannot be undone.") },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                enabled = !isDeleting,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) {
+                if (isDeleting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = MaterialTheme.colorScheme.onError,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text("Delete")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isDeleting) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -546,14 +664,15 @@ fun TripsHeader(tripCount: Int) {
         }
     }
 }
+
 fun generateAvatarColor(text: String): Color {
     val hash = text.hashCode()
     val r = (hash and 0xFF0000 shr 16)
     val g = (hash and 0x00FF00 shr 8)
     val b = (hash and 0x0000FF)
-    // Use darker, more saturated colors for better contrast
     return Color(r, g, b).copy(alpha = 1f)
 }
+
 @RequiresApi(Build.VERSION_CODES.O)
 fun formatDate1(dateString: String): String {
     return try {
@@ -565,12 +684,17 @@ fun formatDate1(dateString: String): String {
         "Unknown Date"
     }
 }
+
+@RequiresApi(Build.VERSION_CODES.O)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfessionalTripCard(
     trip: Trip,
-    onClick: () -> Unit
+    currentUserId: String,
+    onClick: () -> Unit,
+    onDeleteClick: () -> Unit
 ) {
-    val displayName = trip.trip_name?.takeIf { it.isNotBlank() } ?: "Unnamed Trip"
+    val displayName = trip.trip_name.takeIf { it.isNotBlank() } ?: "Unnamed Trip"
     val avatarColor = generateAvatarColor(displayName)
 
     Card(
@@ -616,17 +740,25 @@ fun ProfessionalTripCard(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = "${trip.members?.size ?: 0} members",
+                        text = "${trip.members.size} members",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.outline
                     )
-                    trip.created_at?.let {
-                        Text(
-                            " • ${formatDate1(it)}",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.outline
-                        )
-                    }
+                    Text(
+                        " • ${formatDate1(trip.created_at)}",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+            }
+
+            if (trip.creator_id == currentUserId) {
+                IconButton(onClick = onDeleteClick) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "Delete Trip",
+                        tint = MaterialTheme.colorScheme.error
+                    )
                 }
             }
             Icon(
