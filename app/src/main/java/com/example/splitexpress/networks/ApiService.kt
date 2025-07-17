@@ -393,7 +393,7 @@ object RetrofitInstance {
         private const val BASE_URL = "https://032w6y28pi.execute-api.ap-south-1.amazonaws.com/"
 
     val api: ApiService by lazy {
-        Retrofit.Builder()
+        Retrofit.Builder()  
             .baseUrl(BASE_URL)
             .addConverterFactory(GsonConverterFactory.create())
             .client(client)

@@ -1,33 +1,30 @@
-
 package com.example.splitexpress.screens
 
 import android.content.Context
 import android.os.Build
-import android.util.Log
 import androidx.annotation.RequiresApi
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AccountBox
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.ExitToApp
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -35,9 +32,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.navigation.NavController
+import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
 import com.example.splitexpress.network.DeleteTripRequest
+import com.example.splitexpress.network.GetCasualNameRequest
 import com.example.splitexpress.network.GetSettlementsRequest
 import com.example.splitexpress.network.RetrofitInstance
 import com.example.splitexpress.network.Settlement
@@ -46,243 +49,292 @@ import com.example.splitexpress.utils.TokenManager
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlin.math.abs
 
-// Enhanced data class with display formatting
-data class SettlementSummary(
-    val personName: String,
-    val amountOwedToMe: Double,
-    val amountIOwe: Double,
-    val netAmount: Double,
-    val isPositive: Boolean = netAmount > 0,
-    val formattedAmount: String = "₹${String.format("%.2f", kotlin.math.abs(netAmount))}"
+//region THEME & COLORS (For a self-contained, runnable example)
+// In a real app, this should be in its own file (e.g., ui/theme/Theme.kt)
+
+private val LightColors = lightColorScheme(
+    primary = Color(0xFF4285F4),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFE3F2FD), // Lighter blue container
+    onPrimaryContainer = Color(0xFF0D47A1), // Darker blue for contrast
+    secondary = Color(0xFF5F6368),
+    onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFE8F0FE), // Light blue-gray container
+    onSecondaryContainer = Color(0xFF1A1A1A),
+    tertiary = Color(0xFF34A853), // Green for settlements/success states
+    onTertiary = Color(0xFFFFFFFF),
+    tertiaryContainer = Color(0xFFE8F5E8), // Light green container for settlements
+    onTertiaryContainer = Color(0xFF1B5E20),
+    error = Color(0xFFEA4335),
+    onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFFFEDEA),
+    onErrorContainer = Color(0xFFB71C1C),
+    background = Color(0xFFFAFAFA), // Slightly gray background
+    onBackground = Color(0xFF1F1F1F),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF1F1F1F),
+    surfaceVariant = Color(0xFFF5F5F5), // Light gray for cards
+    onSurfaceVariant = Color(0xFF5F6368),
+    outline = Color(0xFFE0E0E0), // Light border color
+    outlineVariant = Color(0xFFF0F0F0),
+    scrim = Color(0x80000000),
+    surfaceTint = Color(0xFF4285F4),
+    inverseSurface = Color(0xFF313131),
+    inverseOnSurface = Color(0xFFF5F5F5),
+    inversePrimary = Color(0xFF8AB4F8),
 )
 
-@RequiresApi(Build.VERSION_CODES.O)
-@OptIn(ExperimentalMaterial3Api::class)
+private val DarkColors = darkColorScheme(
+    primary = Color(0xFF8AB4F8),
+    onPrimary = Color(0xFF0D47A1),
+    primaryContainer = Color(0xFF1565C0),
+    onPrimaryContainer = Color(0xFFE3F2FD),
+    secondary = Color(0xFFBDC1C6),
+    onSecondary = Color(0xFF2D3132),
+    secondaryContainer = Color(0xFF3C4043),
+    onSecondaryContainer = Color(0xFFE8EAED),
+    tertiary = Color(0xFF81C784), // Light green for dark mode
+    onTertiary = Color(0xFF1B5E20),
+    tertiaryContainer = Color(0xFF2E7D32),
+    onTertiaryContainer = Color(0xFFC8E6C9),
+    error = Color(0xFFFF8A80),
+    onError = Color(0xFFB71C1C),
+    errorContainer = Color(0xFFD32F2F),
+    onErrorContainer = Color(0xFFFFCDD2),
+    background = Color(0xFF121212), // True dark background
+    onBackground = Color(0xFFE8EAED),
+    surface = Color(0xFF1E1E1E), // Dark surface for cards
+    onSurface = Color(0xFFE8EAED),
+    surfaceVariant = Color(0xFF2D2D2D), // Darker variant for elevated surfaces
+    onSurfaceVariant = Color(0xFFBDC1C6),
+    outline = Color(0xFF5F6368), // Darker border
+    outlineVariant = Color(0xFF3C4043),
+    scrim = Color(0x80000000),
+    surfaceTint = Color(0xFF8AB4F8),
+    inverseSurface = Color(0xFFE8EAED),
+    inverseOnSurface = Color(0xFF1F1F1F),
+    inversePrimary = Color(0xFF4285F4),
+)
 @Composable
-fun HomeScreen(navController: NavController) {
+fun SplitExpressTheme(
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    content: @Composable () -> Unit
+) {
+    val colorScheme = if (darkTheme) DarkColors else LightColors
+    MaterialTheme(
+        colorScheme = colorScheme,
+        typography = Typography(), // Assumes a default Typography is defined in your project
+        shapes = Shapes(
+            small = RoundedCornerShape(8.dp),
+            medium = RoundedCornerShape(12.dp),
+            large = RoundedCornerShape(16.dp)
+        ),
+        content = content
+    )
+}
+//endregion
+
+//region Data and Navigation Models
+
+data class SettlementSummary(
+    val personName: String,
+    val netAmount: Double,
+    val isOwedToMe: Boolean = netAmount > 0,
+    val formattedAmount: String = "₹${String.format("%.2f", abs(netAmount))}"
+)
+
+/**
+ * Sealed class for type-safe bottom navigation, with selected/unselected icons.
+ */
+sealed class Screen(val route: String, val title: String, val icon: ImageVector, val selectedIcon: ImageVector) {
+    object Trips : Screen("trips", "Trips", Icons.Outlined.CardTravel, Icons.Filled.CardTravel)
+    object Settlements : Screen("settlements", "Settlements", Icons.Outlined.AccountBalanceWallet, Icons.Filled.AccountBalanceWallet)
+}
+
+val bottomNavItems = listOf(Screen.Trips, Screen.Settlements)
+
+//endregion
+
+//region Main Screen with Bottom Navigation
+
+@RequiresApi(Build.VERSION_CODES.O)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalAnimationApi::class)
+@Composable
+fun HomeScreen(navController: NavHostController) {
+    // This NavController is for the tabs within the HomeScreen
+    val tabNavController = rememberNavController()
+    val navBackStackEntry by tabNavController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
+    // State is hoisted to this top-level component
     var trips by remember { mutableStateOf<List<Trip>>(emptyList()) }
     var settlementSummaries by remember { mutableStateOf<List<SettlementSummary>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-
-    // State for delete confirmation
     var showDeleteDialog by remember { mutableStateOf(false) }
     var tripToDelete by remember { mutableStateOf<Trip?>(null) }
     var isDeleting by remember { mutableStateOf(false) }
+    var isFabMenuExpanded by remember { mutableStateOf(false) }
 
-    // Function to filter active trips (not deleted)
-    fun getActiveTrips(allTrips: List<Trip>): List<Trip> {
-        return allTrips.filter { trip ->
-            // Filter out deleted trips - check both isDeleted flag and null safety
-            trip.isDeleted != true
-        }.sortedByDescending { it.created_at }
-    }
-
-    suspend fun updateSettlements(currentTrips: List<Trip>) {
-        val rawToken = TokenManager.getToken(context) ?: return
-        try {
-            // Only calculate settlements for active (non-deleted) trips
-            val activeTrips = getActiveTrips(currentTrips)
-
-            if (activeTrips.isEmpty()) {
-                settlementSummaries = emptyList()
-                return
-            }
-
-            coroutineScope {
-                val settlementTasks = activeTrips.map { trip ->
-                    async {
-                        try {
-                            val settlementResponse = RetrofitInstance.api.getSettlements(
-                                token = rawToken,
-                                request = GetSettlementsRequest(trip.trip_id)
-                            )
-                            if (settlementResponse.isSuccessful) {
-                                settlementResponse.body()?.settlements ?: emptyList()
-                            } else {
-                                Log.w("GetSettlements", "Failed for trip ${trip.trip_id}: ${settlementResponse.message()}")
-                                emptyList<Settlement>()
-                            }
-                        } catch (e: Exception) {
-                            Log.e("GetSettlements", "Failed for trip ${trip.trip_id}: ${e.message}")
-                            emptyList<Settlement>()
-                        }
-                    }
+    val refreshData: () -> Unit = {
+        scope.launch {
+            isLoading = true
+            errorMessage = null
+            try {
+                val rawToken = TokenManager.getToken(context)
+                if (rawToken.isNullOrBlank()) {
+                    errorMessage = "Authentication required. Please log in again."
+                    isLoading = false
+                    return@launch
                 }
-                val allSettlements = settlementTasks.awaitAll().flatten()
-                settlementSummaries = processSettlements(allSettlements, context)
+                val allTripsResponse = RetrofitInstance.api.getAllMyTrips(rawToken)
+                if (allTripsResponse.isSuccessful) {
+                    val allTrips = allTripsResponse.body()?.user_items ?: emptyList()
+                    val activeTrips = allTrips.filter { it.isDeleted != true }.sortedByDescending { it.created_at }
+                    trips = activeTrips
+                    settlementSummaries = fetchAllSettlements(activeTrips, rawToken, context)
+                } else {
+                    errorMessage = "Unable to load your data. Please try again."
+                }
+            } catch (e: Exception) {
+                errorMessage = "Connection error. Please check your internet and try again."
+            } finally {
+                isLoading = false
             }
-        } catch (e: Exception) {
-            Log.e("UpdateSettlements", "Error recalculating settlements: ${e.message}")
-            settlementSummaries = emptyList()
         }
     }
 
-    // Function to refresh all data
-    suspend fun refreshData() {
-        try {
-            val rawToken = TokenManager.getToken(context)
-            if (rawToken.isNullOrBlank()) {
-                errorMessage = "Authentication required. Please log in again."
-                return
-            }
-
-            val response = RetrofitInstance.api.getAllMyTrips(rawToken)
-            if (response.isSuccessful) {
-                val allTrips = response.body()?.user_items ?: emptyList()
-                val activeTrips = getActiveTrips(allTrips)
-
-                trips = activeTrips
-                updateSettlements(activeTrips)
-                errorMessage = null
-            } else {
-                errorMessage = "Unable to load your trips. Please try again."
-                Log.e("RefreshData", "API Error: ${response.code()} - ${response.message()}")
-            }
-        } catch (e: Exception) {
-            errorMessage = "Connection error. Please check your internet and try again."
-            Log.e("RefreshData", "Exception: ${e.message}")
-        }
-    }
-
-    // Load data on screen launch
-    LaunchedEffect(Unit) {
-        Log.d("HomeScreen", "Loading data...")
-        isLoading = true
+    LaunchedEffect(key1 = Unit) {
         refreshData()
-        delay(300)
-        isLoading = false
     }
 
-    Scaffold(
-        topBar = {
-            CompactTopBar(onLogout = {
-                TokenManager.clearTokens(context)
-                navController.navigate("login") { popUpTo("home") { inclusive = true } }
-            })
-        },
-        floatingActionButton = {
-            EnhancedFAB(onClick = { navController.navigate("createtrip") })
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        containerColor = MaterialTheme.colorScheme.background
-    ) { paddingValues ->
-        if (isLoading) {
-            LoadingScreen()
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(paddingValues),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                // Quick Actions Section
-                item { QuickActionsSection(navController) }
-
-                // Settlement Overview (only if there are active trips with settlements)
-                if (settlementSummaries.isNotEmpty()) {
-                    item { FinancialOverview(settlementSummaries) }
+    SplitExpressTheme {
+        Scaffold(
+            topBar = {
+                SplitExpressTopAppBar(onLogout = {
+                    TokenManager.clearTokens(context)
+                    navController.navigate("login") { popUpTo("home") { inclusive = true } }
+                })
+            },
+            bottomBar = {
+                AppBottomNavigation(navController = tabNavController)
+            },
+            floatingActionButton = {
+                if (currentRoute == Screen.Trips.route) {
+                    ExpandingFloatingActionButton(
+                        isExpanded = isFabMenuExpanded,
+                        onFabClick = { isFabMenuExpanded = !isFabMenuExpanded },
+                        onCreateTripClick = {
+                            isFabMenuExpanded = false
+                            navController.navigate("createtrip")
+                        },
+                        onJoinTripClick = {
+                            isFabMenuExpanded = false
+                            navController.navigate("joinTrip")
+                        }
+                    )
                 }
+            },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            containerColor = MaterialTheme.colorScheme.background
+        ) { innerPadding ->
+            Crossfade(
+                targetState = when {
+                    isLoading -> "LOADING"
+                    errorMessage != null -> "ERROR"
+                    else -> "CONTENT"
+                },
+                modifier = Modifier.padding(innerPadding),
+                animationSpec = tween(500), label = "StateCrossfade"
+            ) { state ->
+                when (state) {
+                    "LOADING" -> LoadingState()
+                    "ERROR" -> ErrorState(message = errorMessage!!, onRetry = refreshData)
+                    "CONTENT" -> {
+                        NavHost(
+                            navController = tabNavController,
+                            startDestination = Screen.Trips.route,
+                            modifier = Modifier.fillMaxSize(),
+                            enterTransition = {
+                                val initialRoute = initialState.destination.route
+                                val targetRoute = targetState.destination.route
+                                val initialIndex = bottomNavItems.indexOfFirst { it.route == initialRoute }
+                                val targetIndex = bottomNavItems.indexOfFirst { it.route == targetRoute }
 
-                // Trips Section
-                item { TripsHeader(tripCount = trips.size) }
-
-                // Handle different states
-                when {
-                    errorMessage != null -> {
-                        item {
-                            ErrorStateCard(errorMessage!!) {
-                                scope.launch {
-                                    isLoading = true
-                                    refreshData()
-                                    isLoading = false
+                                if (initialIndex == -1 || targetIndex == -1) { // Fallback for initial load
+                                    fadeIn(animationSpec = tween(300))
+                                } else if (targetIndex > initialIndex) { // Navigating "forward"
+                                    slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, animationSpec = tween(400))
+                                } else { // Navigating "backward"
+                                    slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, animationSpec = tween(400))
                                 }
+                            },
+                            exitTransition = {
+                                val initialRoute = initialState.destination.route
+                                val targetRoute = targetState.destination.route
+                                val initialIndex = bottomNavItems.indexOfFirst { it.route == initialRoute }
+                                val targetIndex = bottomNavItems.indexOfFirst { it.route == targetRoute }
+
+                                if (initialIndex == -1 || targetIndex == -1) { // Fallback for initial load
+                                    fadeOut(animationSpec = tween(300))
+                                } else if (targetIndex > initialIndex) { // Navigating "forward"
+                                    slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, animationSpec = tween(400))
+                                } else { // Navigating "backward"
+                                    slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, animationSpec = tween(400))
+                                }
+                            }
+                        ) {
+                            composable(Screen.Trips.route) {
+                                TripsScreen(
+                                    navController = navController,
+                                    trips = trips,
+                                    onDeleteClick = { trip ->
+                                        tripToDelete = trip
+                                        showDeleteDialog = true
+                                    }
+                                )
+                            }
+                            composable(Screen.Settlements.route) {
+                                SettlementsScreen(
+                                    settlementSummaries = settlementSummaries,
+                                    onRefresh = refreshData
+                                )
                             }
                         }
                     }
-                    trips.isEmpty() -> {
-                        item { EmptyTripsCard(navController) }
-                    }
-                    else -> {
-                        val currentUserId = TokenManager.getUserId(context) ?: ""
-                        items(trips, key = { it.trip_id }) { trip ->
-                            ProfessionalTripCard(
-                                trip = trip,
-                                currentUserId = currentUserId,
-                                onClick = { navController.navigate("tripDetails/${trip.trip_id}") },
-                                onDeleteClick = {
-                                    tripToDelete = trip
-                                    showDeleteDialog = true
-                                }
-                            )
-                        }
-                    }
                 }
-                // Bottom spacing for FAB
-                item { Spacer(modifier = Modifier.height(80.dp)) }
             }
         }
 
-        // Delete confirmation dialog
         if (showDeleteDialog && tripToDelete != null) {
-            DeleteConfirmationDialog(
+            DeleteTripDialog(
                 tripName = tripToDelete?.trip_name ?: "this trip",
                 isDeleting = isDeleting,
-                onDismiss = {
-                    showDeleteDialog = false
-                    tripToDelete = null
-                },
+                onDismiss = { if (!isDeleting) { showDeleteDialog = false; tripToDelete = null } },
                 onConfirm = {
                     scope.launch {
                         isDeleting = true
-                        val token = TokenManager.getToken(context)
-                        if (token.isNullOrBlank() || tripToDelete == null) {
-                            snackbarHostState.showSnackbar("Authentication error. Please log in again.")
-                            isDeleting = false
-                            showDeleteDialog = false
-                            return@launch
+                        val success = deleteTrip(tripToDelete!!, context)
+                        if (success) {
+                            snackbarHostState.showSnackbar("Trip deleted successfully.")
+                            refreshData()
+                        } else {
+                            snackbarHostState.showSnackbar("Failed to delete trip. You may not be the creator.")
                         }
-
-                        try {
-                            val response = RetrofitInstance.api.deleteTrip(
-                                token = token,
-                                request = DeleteTripRequest(trip_id = tripToDelete!!.trip_id)
-                            )
-                            if (response.isSuccessful) {
-                                // Remove the deleted trip from the current list
-                                val updatedTrips = trips.filterNot { it.trip_id == tripToDelete!!.trip_id }
-                                trips = updatedTrips
-
-                                // Recalculate settlements without the deleted trip
-                                updateSettlements(updatedTrips)
-
-                                snackbarHostState.showSnackbar(
-                                    response.body()?.message ?: "Trip deleted successfully"
-                                )
-                                Log.d("DeleteTrip", "Trip ${tripToDelete!!.trip_id} deleted successfully")
-                            } else {
-                                val errorBody = response.errorBody()?.string() ?: "Unknown error"
-                                Log.e("DeleteTrip", "Error: ${response.code()} - $errorBody")
-                                snackbarHostState.showSnackbar("Failed to delete trip. You might not be the creator.")
-                            }
-                        } catch (e: Exception) {
-                            Log.e("DeleteTrip", "Exception: ${e.message}")
-                            snackbarHostState.showSnackbar("An error occurred: ${e.message}")
-                        } finally {
-                            isDeleting = false
-                            showDeleteDialog = false
-                            tripToDelete = null
-                        }
+                        isDeleting = false
+                        showDeleteDialog = false
+                        tripToDelete = null
                     }
                 }
             )
@@ -291,16 +343,531 @@ fun HomeScreen(navController: NavController) {
 }
 
 @Composable
-fun DeleteConfirmationDialog(
-    tripName: String,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit,
-    isDeleting: Boolean
+fun AppBottomNavigation(navController: NavHostController) {
+    NavigationBar {
+        val navBackStackEntry by navController.currentBackStackEntryAsState()
+        val currentDestination = navBackStackEntry?.destination
+
+        bottomNavItems.forEach { screen ->
+            val isSelected = currentDestination?.hierarchy?.any { it.route == screen.route } == true
+            NavigationBarItem(
+                icon = { Icon(if (isSelected) screen.selectedIcon else screen.icon, contentDescription = screen.title) },
+                label = { Text(screen.title) },
+                selected = isSelected,
+                onClick = {
+                    navController.navigate(screen.route) {
+                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                }
+            )
+        }
+    }
+}
+//endregion
+
+//region Trips Screen and its Components
+
+@RequiresApi(Build.VERSION_CODES.O)
+@OptIn(ExperimentalAnimationApi::class, ExperimentalFoundationApi::class)
+@Composable
+fun TripsScreen(
+    navController: NavHostController,
+    trips: List<Trip>,
+    onDeleteClick: (Trip) -> Unit,
+    modifier: Modifier = Modifier
 ) {
+    if (trips.isEmpty()) {
+        EmptyTripsState(
+            onCreateTripClick = { navController.navigate("createtrip") }
+        )
+        return
+    }
+
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = 16.dp,
+            bottom = 100.dp // Space for FAB
+        ),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            TripsHeader(tripCount = trips.size)
+        }
+
+        items(
+            items = trips,
+            key = { trip -> trip.trip_id }
+        ) { trip ->
+            TripCard(
+                trip = trip,
+                currentUserId = TokenManager.getUserId(LocalContext.current) ?: "",
+                onViewDetailsClick = {
+                    navController.navigate("tripDetails/${trip.trip_id}")
+                },
+                onDeleteClick = { onDeleteClick(trip) },
+                modifier = Modifier.animateItemPlacement(
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessLow
+                    )
+                )
+            )
+        }
+    }
+}
+
+@Composable
+fun TripsHeader(
+    tripCount: Int,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text(
+                text = "Your Trips",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = "$tripCount ${if (tripCount == 1) "trip" else "trips"}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@RequiresApi(Build.VERSION_CODES.O)
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TripCard(
+    trip: Trip,
+    currentUserId: String,
+    onViewDetailsClick: () -> Unit,
+    onDeleteClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    Card(
+        onClick = onViewDetailsClick,
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 1.dp,
+            pressedElevation = 3.dp,
+            hoveredElevation = 2.dp
+        ),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ),
+        border = BorderStroke(
+            width = 1.dp,
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Trip Avatar with Initial
+            TripAvatar(
+                tripName = trip.trip_name,
+                modifier = Modifier.size(48.dp)
+            )
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            // Trip Information
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = trip.trip_name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // Trip Metadata
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Members Count
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.People,
+                            contentDescription = "Members",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "${trip.members.size}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    // Separator
+                    Text(
+                        text = "•",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    // Creation Date
+                    Text(
+                        text = formatDate(trip.created_at),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                // Trip Status Badge
+                if (trip.creator_id == currentUserId) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.wrapContentSize()
+                    ) {
+                        Text(
+                            text = "Creator",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+
+            // Overflow Menu
+            Box {
+                IconButton(
+                    onClick = { menuExpanded = true },
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MoreVert,
+                        contentDescription = "More options",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                TripCardDropdownMenu(
+                    expanded = menuExpanded,
+                    onDismiss = { menuExpanded = false },
+                    isCreator = trip.creator_id == currentUserId,
+                    onViewDetails = {
+                        menuExpanded = false
+                        onViewDetailsClick()
+                    },
+                    onDelete = {
+                        menuExpanded = false
+                        onDeleteClick()
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun TripAvatar(
+    tripName: String,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(
+                brush = Brush.linearGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.primaryContainer,
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+                    )
+                )
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = tripName.take(1).uppercase(),
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+fun TripCardDropdownMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    isCreator: Boolean,
+    onViewDetails: () -> Unit,
+    onDelete: () -> Unit
+) {
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss
+    ) {
+        DropdownMenuItem(
+            text = { Text("View Details") },
+            onClick = onViewDetails,
+            leadingIcon = { Icon(Icons.Outlined.Info, "View Details") }
+        )
+
+        // REMOVED: The disabled "Edit" item is gone.
+        if (isCreator) {
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            DropdownMenuItem(
+                text = { Text("Delete Trip", color = MaterialTheme.colorScheme.error) },
+                onClick = onDelete,
+                leadingIcon = { Icon(Icons.Outlined.Delete, "Delete Trip", tint = MaterialTheme.colorScheme.error) }
+            )
+        }
+    }
+}
+
+@Composable
+fun EmptyTripsState(
+    onCreateTripClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Explore,
+            contentDescription = null,
+            modifier = Modifier.size(64.dp),
+            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(
+            text = "No Trips Yet",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "Create your first trip to start splitting expenses with friends.",
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+        Spacer(modifier = Modifier.height(32.dp))
+        Button(
+            onClick = onCreateTripClick,
+            modifier = Modifier.fillMaxWidth(0.6f),
+            shape = MaterialTheme.shapes.medium
+        ) {
+            Icon(Icons.Default.Add, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Create a Trip")
+        }
+    }
+}
+
+//endregion
+
+//region Settlements Screen and its Components
+
+@Composable
+fun SettlementsScreen(
+    settlementSummaries: List<SettlementSummary>,
+    onRefresh: () -> Unit
+) {
+    val totalOwedToMe = settlementSummaries.filter { it.isOwedToMe }.sumOf { it.netAmount }
+    val totalIOwe = settlementSummaries.filter { !it.isOwedToMe }.sumOf { it.netAmount }
+
+    if (settlementSummaries.isEmpty()) {
+        EmptyState(
+            title = "All Settled Up!",
+            message = "You have no outstanding balances. Great job!",
+            icon = Icons.Outlined.CheckCircle
+        )
+        return
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Overall Balance", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, contentDescription = "Refresh") }
+            }
+        }
+        item { SettlementOverviewCard(owedToMe = totalOwedToMe, iOwe = abs(totalIOwe)) }
+        item {
+            Text("Breakdown", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 24.dp, bottom = 8.dp))
+        }
+        items(settlementSummaries, key = { it.personName }) { summary ->
+            SettlementItem(summary = summary)
+        }
+    }
+}
+
+
+@Composable
+fun SettlementOverviewCard(owedToMe: Double, iOwe: Double) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Row(modifier = Modifier.fillMaxWidth().padding(20.dp), horizontalArrangement = Arrangement.SpaceAround) {
+            val greenColor = Color(0xFF388E3C)
+            val redColor = MaterialTheme.colorScheme.error
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("You are Owed", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(4.dp))
+                Text(text = "₹${String.format("%.2f", owedToMe)}", style = MaterialTheme.typography.headlineSmall, color = greenColor, fontWeight = FontWeight.SemiBold)
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("You Owe", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(4.dp))
+                Text(text = "₹${String.format("%.2f", iOwe)}", style = MaterialTheme.typography.headlineSmall, color = redColor, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
+@Composable
+fun SettlementItem(summary: SettlementSummary) {
+    val amountColor = if (summary.isOwedToMe) Color(0xFF388E3C) else MaterialTheme.colorScheme.error
+    val icon = if (summary.isOwedToMe) Icons.Default.NorthEast else Icons.Default.SouthWest
+    Card(modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(imageVector = icon, contentDescription = "Transaction direction", tint = amountColor)
+            Spacer(Modifier.width(16.dp))
+            Text(
+                text = if (summary.isOwedToMe) "${summary.personName} " else " ${summary.personName}",
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+                fontWeight = FontWeight.Medium
+            )
+            Text(text = summary.formattedAmount, style = MaterialTheme.typography.bodyLarge, color = amountColor, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+//endregion
+
+//region Shared UI Components
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SplitExpressTopAppBar(onLogout: () -> Unit) {
+    TopAppBar(
+        title = { Text("SplitExpress", fontWeight = FontWeight.Bold) },
+        actions = {
+            IconButton(onClick = onLogout) { Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Log Out") }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.primary
+        )
+    )
+}
+
+@Composable
+fun ExpandingFloatingActionButton(
+    isExpanded: Boolean,
+    onFabClick: () -> Unit,
+    onCreateTripClick: () -> Unit,
+    onJoinTripClick: () -> Unit
+) {
+    val rotation by animateFloatAsState(targetValue = if (isExpanded) 45f else 0f, label = "FAB_Rotate")
+    val fabAnimationSpec = tween<Float>(durationMillis = 300, easing = FastOutSlowInEasing)
+
+    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        AnimatedVisibility(
+            visible = isExpanded,
+            enter = fadeIn(animationSpec = fabAnimationSpec) + scaleIn(animationSpec = fabAnimationSpec),
+            exit = fadeOut(animationSpec = fabAnimationSpec) + scaleOut(animationSpec = fabAnimationSpec)
+        ) {
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                // Join Trip Row
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Surface(shape = MaterialTheme.shapes.medium, shadowElevation = 2.dp, color = MaterialTheme.colorScheme.surface) {
+                        Text("Join Trip", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.labelMedium)
+                    }
+                    SmallFloatingActionButton(
+                        onClick = onJoinTripClick,
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                    ) {
+                        Icon(Icons.Outlined.GroupAdd, contentDescription = "Join a Trip")
+                    }
+                }
+                // Create Trip Row
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Surface(shape = MaterialTheme.shapes.medium, shadowElevation = 2.dp, color = MaterialTheme.colorScheme.surface) {
+                        Text("Create Trip", modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.labelMedium)
+                    }
+                    SmallFloatingActionButton(
+                        onClick = onCreateTripClick,
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                    ) {
+                        Icon(Icons.Outlined.AddCircle, contentDescription = "Create a new Trip")
+                    }
+                }
+            }
+        }
+        FloatingActionButton(
+            onClick = onFabClick,
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary
+        ) {
+            Icon(Icons.Default.Add, contentDescription = "Add Trip", modifier = Modifier.rotate(rotation))
+        }
+    }
+}
+
+@Composable
+fun DeleteTripDialog(tripName: String, isDeleting: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = { if (!isDeleting) onDismiss() },
-        title = { Text("Delete Trip", fontWeight = FontWeight.Bold) },
-        text = { Text("Are you sure you want to permanently delete the trip \"$tripName\"? This action cannot be undone.") },
+        icon = { Icon(Icons.Outlined.DeleteForever, contentDescription = null) },
+        title = { Text("Delete Trip?") },
+        text = { Text("Are you sure you want to permanently delete \"$tripName\"? This action cannot be undone.") },
         confirmButton = {
             Button(
                 onClick = onConfirm,
@@ -308,647 +875,97 @@ fun DeleteConfirmationDialog(
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
             ) {
                 if (isDeleting) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        color = MaterialTheme.colorScheme.onError,
-                        strokeWidth = 2.dp
-                    )
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
                 } else {
                     Text("Delete")
                 }
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !isDeleting) {
-                Text("Cancel")
-            }
-        }
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun CompactTopBar(onLogout: () -> Unit) {
-    TopAppBar(
-        title = {
-            Text(
-                "SplitEx",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-        },
-        actions = {
-            IconButton(onClick = onLogout) {
-                Icon(
-                    Icons.Default.ExitToApp,
-                    contentDescription = "Sign out",
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-        },
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        modifier = Modifier
-            .fillMaxWidth()
-            .shadow(1.dp)
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !isDeleting) { Text("Cancel") } }
     )
 }
 
 @Composable
-fun EnhancedFAB(onClick: () -> Unit) {
-    FloatingActionButton(
-        onClick = onClick,
-        containerColor = MaterialTheme.colorScheme.primary,
-        contentColor = MaterialTheme.colorScheme.onPrimary,
+fun LoadingState() {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator(modifier = Modifier.size(48.dp))
+            Spacer(Modifier.height(16.dp))
+            Text("Loading your data...", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+fun EmptyState(title: String, message: String, icon: ImageVector) {
+    Column(
         modifier = Modifier
-            .size(56.dp)
-            .shadow(6.dp, RoundedCornerShape(16.dp))
+            .fillMaxSize()
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
-        Icon(
-            Icons.Default.Add,
-            contentDescription = "Create new trip",
-            modifier = Modifier.size(24.dp)
-        )
+        Icon(icon, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.secondary)
+        Spacer(Modifier.height(24.dp))
+        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Text(message, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
+//endregion
 
-@Composable
-fun QuickActionsSection(navController: NavController) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        ActionCard(
-            title = "New Trip",
-            subtitle = "Create & manage",
-            icon = Icons.Outlined.Add,
-            onClick = { navController.navigate("createtrip") },
-            modifier = Modifier.weight(1f),
-            containerColor = MaterialTheme.colorScheme.primary,
-            contentColor = MaterialTheme.colorScheme.onPrimary
-        )
-
-        ActionCard(
-            title = "Join Trip",
-            subtitle = "Enter invite code",
-            icon = Icons.Outlined.Add,
-            onClick = { navController.navigate("joinTrip") },
-            modifier = Modifier.weight(1f),
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
-fun ActionCard(
-    title: String,
-    subtitle: String,
-    icon: ImageVector,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    containerColor: Color,
-    contentColor: Color
-) {
-    Card(
-        onClick = onClick,
-        modifier = modifier
-            .height(80.dp)
-            .shadow(2.dp, RoundedCornerShape(12.dp)),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = containerColor)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                icon,
-                contentDescription = null,
-                tint = contentColor,
-                modifier = Modifier.size(24.dp)
-            )
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            Column {
-                Text(
-                    text = title,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = contentColor
-                )
-                Text(
-                    text = subtitle,
-                    fontSize = 12.sp,
-                    color = contentColor.copy(alpha = 0.7f)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun FinancialOverview(summaries: List<SettlementSummary>) {
-    val totalOwedToMe = summaries.filter { it.isPositive }.sumOf { it.netAmount }
-    val totalIOwe = summaries.filter { !it.isPositive }.sumOf { kotlin.math.abs(it.netAmount) }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .shadow(2.dp, RoundedCornerShape(16.dp)),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(20.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Financial Overview",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-
-                Icon(
-                    Icons.Default.AccountBox,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                FinancialMetricCard(
-                    title = "You get",
-                    amount = totalOwedToMe,
-                    icon = Icons.Default.KeyboardArrowUp,
-                    isPositive = true,
-                    modifier = Modifier.weight(1f)
-                )
-
-                FinancialMetricCard(
-                    title = "You owe",
-                    amount = totalIOwe,
-                    icon = Icons.Default.KeyboardArrowDown,
-                    isPositive = false,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
-            if (summaries.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text(
-                    "Recent Settlements",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 200.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    items(summaries) { summary ->
-                        CompactSettlementItem(summary)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun FinancialMetricCard(
-    title: String,
-    amount: Double,
-    icon: ImageVector,
-    isPositive: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val color = if (isPositive) Color(0xFF4CAF50) else Color(0xFFF44336)
-
-    Card(
-        modifier = modifier.height(70.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = color.copy(alpha = 0.1f)
-        ),
-        shape = RoundedCornerShape(10.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Icon(
-                icon,
-                contentDescription = null,
-                tint = color,
-                modifier = Modifier.size(16.dp)
-            )
-
-            Spacer(modifier = Modifier.height(2.dp))
-
-            Text(
-                "₹${String.format("%.0f", amount)}",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                color = color
-            )
-
-            Text(
-                title,
-                fontSize = 10.sp,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-            )
-        }
-    }
-}
-
-@Composable
-fun CompactSettlementItem(summary: SettlementSummary) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(
-                    if (summary.isPositive)
-                        Color(0xFF4CAF50).copy(alpha = 0.1f)
-                    else
-                        Color(0xFFF44336).copy(alpha = 0.1f)
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = summary.personName.take(1).uppercase(),
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                color = if (summary.isPositive) Color(0xFF4CAF50) else Color(0xFFF44336)
-            )
-        }
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = summary.personName,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-        }
-
-        Text(
-            text = summary.formattedAmount,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = if (summary.isPositive) Color(0xFF4CAF50) else Color(0xFFF44336)
-        )
-    }
-}
-
-@Composable
-fun TripsHeader(tripCount: Int) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            "Your Trips",
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-
-        if (tripCount > 0) {
-            Surface(
-                color = MaterialTheme.colorScheme.primaryContainer,
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text(
-                    text = "$tripCount",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                )
-            }
-        }
-    }
-}
-
-fun generateAvatarColor(text: String): Color {
-    val hash = text.hashCode()
-    val r = (hash and 0xFF0000 shr 16)
-    val g = (hash and 0x00FF00 shr 8)
-    val b = (hash and 0x0000FF)
-    return Color(r, g, b).copy(alpha = 1f)
-}
+//region Utility and Network Functions
 
 @RequiresApi(Build.VERSION_CODES.O)
-fun formatDate1(dateString: String): String {
+private fun formatDate(dateString: String): String {
     return try {
         val instant = Instant.parse(dateString)
-        val localDateTime = LocalDateTime.ofInstant(instant, ZoneId.systemDefault())
-        val formatter = DateTimeFormatter.ofPattern("dd MMM yyyy")
-        localDateTime.format(formatter)
-    } catch (e: Exception) {
-        "Unknown Date"
-    }
+        LocalDateTime.ofInstant(instant, ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("dd MMM yyyy"))
+    } catch (e: Exception) { "Unknown Date" }
 }
 
-@RequiresApi(Build.VERSION_CODES.O)
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ProfessionalTripCard(
-    trip: Trip,
-    currentUserId: String,
-    onClick: () -> Unit,
-    onDeleteClick: () -> Unit
-) {
-    val displayName = trip.trip_name.takeIf { it.isNotBlank() } ?: "Unnamed Trip"
-    val avatarColor = generateAvatarColor(displayName)
+private suspend fun deleteTrip(trip: Trip, context: Context): Boolean {
+    val token = TokenManager.getToken(context) ?: return false
+    return try {
+        RetrofitInstance.api.deleteTrip(token, DeleteTripRequest(trip_id = trip.trip_id)).isSuccessful
+    } catch (e: Exception) { false }
+}
 
-    Card(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(avatarColor.copy(alpha = 0.2f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = displayName.take(1).uppercase(),
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = avatarColor
-                )
+private suspend fun fetchAllSettlements(activeTrips: List<Trip>, token: String, context: Context): List<SettlementSummary> {
+    if (activeTrips.isEmpty()) return emptyList()
+    return coroutineScope {
+        val settlementResults = activeTrips.map { trip ->
+            async {
+                try {
+                    val response = RetrofitInstance.api.getSettlements(token, GetSettlementsRequest(trip.trip_id))
+                    if (response.isSuccessful) Pair(response.body()?.settlements ?: emptyList(), trip.trip_id) else Pair(emptyList(), trip.trip_id)
+                } catch (e: Exception) { Pair(emptyList<Settlement>(), trip.trip_id) }
             }
-            Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = displayName,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Default.Person, contentDescription = "Members",
-                        tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "${trip.members.size} members",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.outline
-                    )
-                    Text(
-                        " • ${formatDate1(trip.created_at)}",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.outline
-                    )
+        }.awaitAll()
+
+        val currentUserCasualNames = activeTrips.map { trip ->
+            async {
+                try {
+                    val request = GetCasualNameRequest(trip_id = trip.trip_id)
+                    val response = RetrofitInstance.api.getCasualNameByUID(token, request)
+                    Pair(trip.trip_id, response.body()?.casual_name ?: "")
+                } catch (e: Exception) { Pair(trip.trip_id, "") }
+            }
+        }.awaitAll().toMap()
+
+        val summaryMap = mutableMapOf<String, Double>()
+        for ((settlements, tripId) in settlementResults) {
+            val currentUserCasualName = currentUserCasualNames[tripId] ?: ""
+            for (s in settlements) {
+                val amount = s.amount.toDoubleOrNull() ?: 0.0
+                when (currentUserCasualName) {
+                    s.from -> summaryMap[s.to] = (summaryMap[s.to] ?: 0.0) + amount
+                    s.to -> summaryMap[s.from] = (summaryMap[s.from] ?: 0.0) - amount
                 }
             }
-
-            if (trip.creator_id == currentUserId) {
-                IconButton(onClick = onDeleteClick) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = "Delete Trip",
-                        tint = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-            Icon(
-                Icons.Default.KeyboardArrowRight,
-                contentDescription = "View details",
-                tint = MaterialTheme.colorScheme.outline,
-                modifier = Modifier.size(24.dp)
-            )
         }
+        summaryMap.filter { abs(it.value) >= 0.01 }.map { (name, netAmount) -> // Filter out negligible amounts
+            SettlementSummary(personName = name, netAmount = netAmount)
+        }.sortedByDescending { it.netAmount }
     }
-}
-
-@Composable
-fun EmptyTripsCard(navController: NavController) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .shadow(1.dp, RoundedCornerShape(16.dp)),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Icon(
-                Icons.Default.KeyboardArrowUp,
-                contentDescription = null,
-                modifier = Modifier.size(48.dp),
-                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-            )
-
-            Text(
-                "Start Your Journey",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(top = 16.dp)
-            )
-
-            Text(
-                "Create your first trip to start managing group expenses effortlessly",
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.outline,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 8.dp, bottom = 20.dp),
-                lineHeight = 20.sp
-            )
-
-            Button(
-                onClick = { navController.navigate("createtrip") },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                )
-            ) {
-                Icon(
-                    Icons.Default.Add,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Create Your First Trip")
-            }
-        }
-    }
-}
-
-@Composable
-fun ErrorStateCard(
-    message: String,
-    onRetry: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .shadow(1.dp, RoundedCornerShape(16.dp)),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.1f)
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Icon(
-                Icons.Default.Warning,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(40.dp)
-            )
-
-            Text(
-                "Something went wrong",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(top = 12.dp)
-            )
-
-            Text(
-                message,
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.outline,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 8.dp, bottom = 16.dp)
-            )
-
-            Button(
-                onClick = onRetry,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.error
-                )
-            ) {
-                Icon(
-                    Icons.Default.Refresh,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Try Again")
-            }
-        }
-    }
-}
-
-@Composable
-fun LoadingScreen() {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(40.dp),
-                color = MaterialTheme.colorScheme.primary,
-                strokeWidth = 3.dp
-            )
-
-            Text(
-                "Loading...",
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.outline,
-                modifier = Modifier.padding(top = 16.dp)
-            )
-        }
-    }
-}
-
-// Enhanced settlement processing
-fun processSettlements(settlements: List<Settlement>, context: Context): List<SettlementSummary> {
-    val currentUser = TokenManager.getCurrentUserName(context) ?: ""
-    val summaryMap = mutableMapOf<String, SettlementSummary>()
-
-    settlements.forEach { settlement ->
-        val amount = settlement.amount.toDoubleOrNull() ?: 0.0
-
-        // Update for the person who owes money
-        val fromSummary = summaryMap.getOrPut(settlement.from) {
-            SettlementSummary(settlement.from, 0.0, 0.0, 0.0)
-        }
-        summaryMap[settlement.from] = fromSummary.copy(
-            amountIOwe = fromSummary.amountIOwe + amount
-        )
-
-        // Update for the person who is owed money
-        val toSummary = summaryMap.getOrPut(settlement.to) {
-            SettlementSummary(settlement.to, 0.0, 0.0, 0.0)
-        }
-        summaryMap[settlement.to] = toSummary.copy(
-            amountOwedToMe = toSummary.amountOwedToMe + amount
-        )
-    }
-
-    return summaryMap.values
-        .filter { it.personName != currentUser } // Filter out current user
-        .map { summary ->
-            val netAmount = summary.amountOwedToMe - summary.amountIOwe
-            summary.copy(
-                netAmount = netAmount,
-                isPositive = netAmount > 0,
-                formattedAmount = "₹${String.format("%.2f", kotlin.math.abs(netAmount))}"
-            )
-        }.filter { it.netAmount != 0.0 }
-        .sortedByDescending { it.netAmount }
 }

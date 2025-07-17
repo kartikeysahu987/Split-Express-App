@@ -283,25 +283,25 @@ private fun DeleteConfirmationDialog(
     )
 }
 
-@Composable
-private fun LoadingState() {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            CircularProgressIndicator()
-            Text(
-                text = "Loading trip details...",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
+//@Composable
+//private fun LoadingState() {
+//    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+//        Column(
+//            horizontalAlignment = Alignment.CenterHorizontally,
+//            verticalArrangement = Arrangement.spacedBy(16.dp)
+//        ) {
+//            CircularProgressIndicator()
+//            Text(
+//                text = "Loading trip details...",
+//                style = MaterialTheme.typography.bodyLarge,
+//                color = MaterialTheme.colorScheme.onSurfaceVariant
+//            )
+//        }
+//    }
+//}
 
 @Composable
-private fun ErrorState(message: String, onRetry: () -> Unit) {
+public fun ErrorState(message: String, onRetry: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -895,12 +895,12 @@ fun parseDate(dateString: String): Long {
     } catch (e: Exception) { 0L }
 }
 
-fun formatDate(dateString: String): String {
-    return try {
-        val date = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).parse(dateString)
-        SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(date ?: Date())
-    } catch (e: Exception) { "Date unknown" }
-}
+//fun formatDate(dateString: String): String {
+//    return try {
+//        val date = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).parse(dateString)
+//        SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(date ?: Date())
+//    } catch (e: Exception) { "Date unknown" }
+//}
 
 @Composable
 fun getCategoryColor(description: String): Color {
