@@ -41,6 +41,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.splitexpress.network.DeleteTripRequest
 import com.example.splitexpress.network.GetCasualNameRequest
+import com.example.splitexpress.network.GetRealNameRequest
 import com.example.splitexpress.network.GetSettlementsRequest
 import com.example.splitexpress.network.RetrofitInstance
 import com.example.splitexpress.network.Settlement
@@ -933,39 +934,84 @@ private suspend fun deleteTrip(trip: Trip, context: Context): Boolean {
 
 private suspend fun fetchAllSettlements(activeTrips: List<Trip>, token: String, context: Context): List<SettlementSummary> {
     if (activeTrips.isEmpty()) return emptyList()
+
     return coroutineScope {
+        // Step 1: Fetch all settlement data for each trip in parallel.
         val settlementResults = activeTrips.map { trip ->
             async {
                 try {
                     val response = RetrofitInstance.api.getSettlements(token, GetSettlementsRequest(trip.trip_id))
                     if (response.isSuccessful) Pair(response.body()?.settlements ?: emptyList(), trip.trip_id) else Pair(emptyList(), trip.trip_id)
-                } catch (e: Exception) { Pair(emptyList<Settlement>(), trip.trip_id) }
+                } catch (e: Exception) {
+                    Pair(emptyList<Settlement>(), trip.trip_id)
+                }
             }
         }.awaitAll()
 
+        // Exit early if there are no settlements at all to process.
+        if (settlementResults.all { it.first.isEmpty() }) {
+            return@coroutineScope emptyList()
+        }
+
+        // Step 2: Fetch the current user's casual name for each trip.
         val currentUserCasualNames = activeTrips.map { trip ->
             async {
                 try {
                     val request = GetCasualNameRequest(trip_id = trip.trip_id)
                     val response = RetrofitInstance.api.getCasualNameByUID(token, request)
                     Pair(trip.trip_id, response.body()?.casual_name ?: "")
-                } catch (e: Exception) { Pair(trip.trip_id, "") }
+                } catch (e: Exception) {
+                    Pair(trip.trip_id, "")
+                }
             }
         }.awaitAll().toMap()
 
-        val summaryMap = mutableMapOf<String, Double>()
+        // Step 3: Create a list of all individual transactions that need their names resolved.
+        // The list will contain: (Other Person's Casual Name, Amount, Trip ID)
+        val transactionsToResolve = mutableListOf<Triple<String, Double, String>>()
         for ((settlements, tripId) in settlementResults) {
-            val currentUserCasualName = currentUserCasualNames[tripId] ?: ""
+            val currentUserCasualName = currentUserCasualNames[tripId] ?: continue
             for (s in settlements) {
                 val amount = s.amount.toDoubleOrNull() ?: 0.0
                 when (currentUserCasualName) {
-                    s.from -> summaryMap[s.to] = (summaryMap[s.to] ?: 0.0) + amount
-                    s.to -> summaryMap[s.from] = (summaryMap[s.from] ?: 0.0) - amount
+                    s.from -> {
+                        // Current user paid, so they are owed money BY s.to
+                        transactionsToResolve.add(Triple(s.to, amount, tripId))
+                    }
+                    s.to -> {
+                        // Current user received, so they owe money TO s.from
+                        transactionsToResolve.add(Triple(s.from, -amount, tripId))
+                    }
                 }
             }
         }
-        summaryMap.filter { abs(it.value) >= 0.01 }.map { (name, netAmount) -> // Filter out negligible amounts
-            SettlementSummary(personName = name, netAmount = netAmount)
-        }.sortedByDescending { it.netAmount }
+
+        // Step 4: Resolve all casual names to real names using the new API.
+        // We do this in parallel for efficiency.
+        val resolvedTransactions = transactionsToResolve.map { (casualName, amount, tripId) ->
+            async {
+                val realName = try {
+                    val request = GetRealNameRequest(trip_id = tripId, name = casualName)
+                    val response = RetrofitInstance.api.getRealName(token, request)
+                    // Use the resolved real name, or fall back to the casual name if API fails.
+                    response.body()?.name ?: casualName
+                } catch (e: Exception) {
+                    casualName // Fallback on network error
+                }
+                Pair(realName, amount) // Pair the resolved real name with the amount
+            }
+        }.awaitAll()
+
+        // Step 5: Aggregate the final amounts, now grouped by the REAL name.
+        val finalSummaryMap = mutableMapOf<String, Double>()
+        resolvedTransactions.forEach { (realName, amount) ->
+            finalSummaryMap[realName] = (finalSummaryMap[realName] ?: 0.0) + amount
+        }
+
+        // Step 6: Convert the final map into the SettlementSummary list for the UI.
+        finalSummaryMap.filter { abs(it.value) >= 0.01 } // Filter out negligible amounts
+            .map { (name, netAmount) ->
+                SettlementSummary(personName = name, netAmount = netAmount)
+            }.sortedByDescending { it.netAmount }
     }
 }

@@ -254,7 +254,13 @@ data class DeleteResponse(
     val message: String
 )
 // ---- RETROFIT SERVICE ----
-
+data class GetRealNameRequest(
+    val trip_id: String,
+    val name: String
+)
+data class GetRealNameResponse(
+    val name:String
+)
 interface ApiService {
 
     // User endpoints
@@ -371,6 +377,12 @@ interface ApiService {
         @Header("token") token: String,
         @Body request: DeleteTransactionRequest
     ): Response<DeleteResponse>
+
+    @POST("trip/getRealName")
+    suspend fun getRealName(
+        @Header("token") token: String,
+        @Body request: GetRealNameRequest
+    ): Response<GetRealNameResponse>
 }
 
 // ---- RETROFIT INSTANCE ----

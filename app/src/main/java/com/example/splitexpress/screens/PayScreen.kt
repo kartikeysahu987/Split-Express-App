@@ -39,6 +39,8 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.example.splitexpress.network.*
 import com.example.splitexpress.utils.TokenManager
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -50,12 +52,13 @@ fun PayScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // State variables (original logic is untouched)
+    // State variables
     var tripDetails by remember { mutableStateOf<Trip?>(null) }
     var allMembers by remember { mutableStateOf<List<String>>(emptyList()) }
     var freeMembers by remember { mutableStateOf<List<String>>(emptyList()) }
     var notFreeMembers by remember { mutableStateOf<List<String>>(emptyList()) }
-    var currentUserName by remember { mutableStateOf<String?>(null) }
+    var currentUserCasualName by remember { mutableStateOf<String?>(null) } // Renamed for clarity
+    var nameMappings by remember { mutableStateOf<Map<String, String>>(emptyMap()) } // New state for name resolution
     var selectedMember by remember { mutableStateOf<String?>(null) }
     var amount by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
@@ -82,9 +85,9 @@ fun PayScreen(
         )
     )
 
-    // Original data loading logic remains the same
-    LaunchedEffect(tripId, isLoading) {
-        if (!isLoading) return@LaunchedEffect // Prevent re-triggering on config changes
+    // Data loading logic with name resolution
+    LaunchedEffect(tripId) {
+        if (!isLoading) return@LaunchedEffect
         Log.d("PayScreen", "Loading data for trip: $tripId")
         try {
             val token = TokenManager.getToken(context)
@@ -94,46 +97,45 @@ fun PayScreen(
                 return@LaunchedEffect
             }
 
-            // Using coroutine supervisorScope to let them run concurrently and handle errors gracefully
-            kotlinx.coroutines.coroutineScope {
-                val casualNameJob = launch {
-                    try {
-                        val casualNameResponse = RetrofitInstance.api.getCasualNameByUID(token = token, request = GetCasualNameRequest(trip_id = tripId))
-                        if (casualNameResponse.isSuccessful) currentUserName = casualNameResponse.body()?.casual_name
-                    } catch (e: Exception) { Log.e("PayScreen", "Error getting casual name", e) }
-                }
+            // Step 1: Fetch primary data concurrently
+            val casualNameDeferred = async { RetrofitInstance.api.getCasualNameByUID(token, GetCasualNameRequest(tripId)) }
+            val tripsDeferred = async { RetrofitInstance.api.getAllMyTrips(token) }
 
-                val tripsJob = launch {
-                    try {
-                        val myTripsResponse = RetrofitInstance.api.getAllMyTrips(token)
-                        if (myTripsResponse.isSuccessful) {
-                            tripDetails = myTripsResponse.body()?.user_items?.find { it.trip_id == tripId }
+            val casualNameResponse = casualNameDeferred.await()
+            val myTripsResponse = tripsDeferred.await()
+
+            currentUserCasualName = casualNameResponse.body()?.casual_name
+            tripDetails = myTripsResponse.body()?.user_items?.find { it.trip_id == tripId }
+
+            // Step 2: Fetch members and collect all casual names
+            val membersData = tripDetails?.invite_code?.let { inviteCode ->
+                RetrofitInstance.api.getMembers(token, GetMembersRequest(inviteCode)).body()
+            }
+            freeMembers = membersData?.free_members ?: emptyList()
+            notFreeMembers = membersData?.not_free_members ?: emptyList()
+            allMembers = (freeMembers + notFreeMembers).filter { it != currentUserCasualName }
+
+            val allCasualNames = (freeMembers + notFreeMembers + listOfNotNull(currentUserCasualName)).toSet()
+
+            // Step 3: Fetch real names for all casual names concurrently
+            if (allCasualNames.isNotEmpty()) {
+                val nameMappingJobs = allCasualNames.map { casualName ->
+                    async {
+                        try {
+                            val response = RetrofitInstance.api.getRealName(token, GetRealNameRequest(tripId, casualName))
+                            if (response.isSuccessful && response.body() != null) {
+                                casualName to response.body()!!.name
+                            } else {
+                                casualName to casualName // Fallback
+                            }
+                        } catch (e: Exception) {
+                            casualName to casualName // Fallback on exception
                         }
-                    } catch (e: Exception) { Log.e("PayScreen", "Error getting trip details", e) }
-                }
-
-                casualNameJob.join()
-                tripsJob.join()
-            }
-
-
-            tripDetails?.invite_code?.let { inviteCode ->
-                try {
-                    val membersResponse = RetrofitInstance.api.getMembers(token = token, request = GetMembersRequest(invite_code = inviteCode))
-                    if (membersResponse.isSuccessful) {
-                        val membersData = membersResponse.body()
-                        freeMembers = membersData?.free_members ?: emptyList()
-                        notFreeMembers = membersData?.not_free_members ?: emptyList()
-                        allMembers = (freeMembers + notFreeMembers).filter { it != currentUserName }
-                    } else {
-                        errorMessage = "Failed to load members: ${membersResponse.message()}"
                     }
-                } catch (e: Exception) {
-                    errorMessage = "Network error while getting members: ${e.message}"
                 }
-            } ?: run {
-                if (errorMessage == null) errorMessage = "Trip details not found or invite code is missing"
+                nameMappings = nameMappingJobs.awaitAll().toMap()
             }
+
         } catch (e: Exception) {
             errorMessage = "Failed to load data: ${e.message}"
         } finally {
@@ -142,12 +144,16 @@ fun PayScreen(
     }
 
 
-    // Payment submission logic (untouched)
+    // Payment submission logic (untouched) - uses casual names for API calls
     fun submitPayment() {
         when (splitMode) {
             "individual" -> {
-                if (selectedMember.isNullOrBlank() || amount.isBlank() || amount.toDoubleOrNull() == null || amount.toDouble() <= 0) {
-                    errorMessage = "Please select a member and enter a valid amount."
+                if (selectedMember == currentUserCasualName) {
+                    errorMessage = "You cannot pay yourself."
+                    return
+                }
+                if (selectedMember.isNullOrBlank() || amount.isBlank() || amount.toDoubleOrNull() == null || amount.toDouble() <= 0 || amount.toDouble() > 999999.99) {
+                    errorMessage = "Please select a member and enter a valid amount (max ₹999,999.99)."
                     return
                 }
 
@@ -158,10 +164,10 @@ fun PayScreen(
                         val token = TokenManager.getToken(context)
                         val payRequest = PayRequest(
                             trip_id = tripId,
-                            payer_name = currentUserName!!,
+                            payer_name = currentUserCasualName!!,
                             reciever_name = selectedMember!!,
                             amount = amount,
-                            description = description.ifBlank { "Payment to $selectedMember" }
+                            description = description.ifBlank { "Payment to ${nameMappings[selectedMember] ?: selectedMember}" }
                         )
                         val response = RetrofitInstance.api.pay(token = token.toString(), request = payRequest)
                         if (response.isSuccessful) {
@@ -181,7 +187,6 @@ fun PayScreen(
                     }
                 }
             }
-
             "equal" -> {
                 if (selectedMembers.isEmpty() || amount.isBlank() || amount.toDoubleOrNull() == null || amount.toDouble() <= 0) {
                     errorMessage = "Please select members and enter a valid total amount."
@@ -196,14 +201,13 @@ fun PayScreen(
                         val totalAmount = amount.toDouble()
                         val totalPeople = selectedMembers.size + if (includeCurrentUser) 1 else 0
                         val amountPerPerson = totalAmount / totalPeople
-
                         var successCount = 0
 
                         for (member in selectedMembers) {
                             try {
                                 val payRequest = PayRequest(
                                     trip_id = tripId,
-                                    payer_name = currentUserName!!,
+                                    payer_name = currentUserCasualName!!,
                                     reciever_name = member,
                                     amount = String.format("%.2f", amountPerPerson),
                                     description = description.ifBlank { "Equally split expense" }
@@ -230,7 +234,6 @@ fun PayScreen(
                     }
                 }
             }
-
             "custom" -> {
                 if (selectedMembers.isEmpty() || !selectedMembers.any { member ->
                         val memberAmount = individualAmounts[member]
@@ -253,7 +256,7 @@ fun PayScreen(
                                 try {
                                     val payRequest = PayRequest(
                                         trip_id = tripId,
-                                        payer_name = currentUserName!!,
+                                        payer_name = currentUserCasualName!!,
                                         reciever_name = member,
                                         amount = memberAmount,
                                         description = description.ifBlank { "Custom split expense" }
@@ -343,6 +346,7 @@ fun PayScreen(
                                         amount = amount,
                                         description = description,
                                         allMembers = allMembers,
+                                        nameMappings = nameMappings, // Pass the map
                                         selectedMembers = selectedMembers,
                                         individualAmounts = individualAmounts,
                                         includeCurrentUser = includeCurrentUser,
@@ -392,6 +396,7 @@ fun PayScreen(
         ModernMemberSelectionDialog(
             freeMembers = freeMembers,
             notFreeMembers = notFreeMembers,
+            nameMappings = nameMappings, // Pass the map
             onMemberSelected = { member ->
                 selectedMember = member
                 showMemberSelection = false
@@ -506,6 +511,7 @@ private fun ModernPaymentForm(
     amount: String,
     description: String,
     allMembers: List<String>,
+    nameMappings: Map<String, String>, // Accept the map
     selectedMembers: Set<String>,
     individualAmounts: Map<String, String>,
     includeCurrentUser: Boolean,
@@ -520,14 +526,14 @@ private fun ModernPaymentForm(
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         AnimatedVisibility(visible = splitMode == "individual", enter = fadeIn(), exit = fadeOut()) {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                ModernMemberSelector(selectedMember = selectedMember, onMemberClick = onMemberClick)
+                ModernMemberSelector(selectedMember = selectedMember, nameMappings = nameMappings, onMemberClick = onMemberClick)
                 ModernAmountField(amount = amount, onAmountChange = onAmountChange, label = "Amount")
             }
         }
         AnimatedVisibility(visible = splitMode == "equal", enter = fadeIn(), exit = fadeOut()) {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 ModernSwitchRow(label = "Include myself in split", checked = includeCurrentUser, onCheckedChange = onIncludeCurrentUserChange)
-                ModernMemberSelectionList(members = allMembers, selectedMembers = selectedMembers, onSelectionChange = onMemberSelectionChange)
+                ModernMemberSelectionList(members = allMembers, nameMappings = nameMappings, selectedMembers = selectedMembers, onSelectionChange = onMemberSelectionChange)
                 val totalAmount = amount.toDoubleOrNull() ?: 0.0
                 val totalPeople = selectedMembers.size + if (includeCurrentUser) 1 else 0
                 val supportingText = if (totalPeople > 0 && totalAmount > 0) "₹${"%.2f".format(totalAmount / totalPeople)} per person" else null
@@ -537,6 +543,7 @@ private fun ModernPaymentForm(
         AnimatedVisibility(visible = splitMode == "custom", enter = fadeIn(), exit = fadeOut()) {
             ModernCustomSplitList(
                 members = allMembers,
+                nameMappings = nameMappings,
                 selectedMembers = selectedMembers,
                 individualAmounts = individualAmounts,
                 onMemberSelectionChange = onMemberSelectionChange,
@@ -549,9 +556,11 @@ private fun ModernPaymentForm(
 }
 
 @Composable
-private fun ModernMemberSelector(selectedMember: String?, onMemberClick: () -> Unit) {
+private fun ModernMemberSelector(selectedMember: String?, nameMappings: Map<String, String>, onMemberClick: () -> Unit) {
+    // Look up the real name for display, fallback to casual name, then to empty
+    val displayName = nameMappings[selectedMember] ?: selectedMember ?: ""
     OutlinedTextField(
-        value = selectedMember ?: "",
+        value = displayName,
         onValueChange = {},
         label = { Text("Pay To") },
         placeholder = { Text("Select a member") },
@@ -574,16 +583,22 @@ private fun ModernMemberSelector(selectedMember: String?, onMemberClick: () -> U
 private fun ModernAmountField(amount: String, onAmountChange: (String) -> Unit, label: String, supportingText: String? = null) {
     OutlinedTextField(
         value = amount,
-        onValueChange = { onAmountChange(it.filter { char -> char.isDigit() || char == '.' }) },
+        onValueChange = { newValue ->
+            // Enhanced decimal validation
+            val filtered = newValue.filter { char -> char.isDigit() || char == '.' }
+            val decimalCount = filtered.count { it == '.' }
+            if (decimalCount <= 1) {
+                if (filtered.startsWith(".")) onAmountChange("0$filtered") else onAmountChange(filtered)
+            }
+        },
         label = { Text(label) },
         prefix = { Text("₹ ", fontWeight = FontWeight.SemiBold) },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         modifier = Modifier.fillMaxWidth(),
         singleLine = true,
         supportingText = supportingText?.let { { Text(it, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold) } }
     )
 }
-
 @Composable
 private fun ModernDescriptionField(description: String, onDescriptionChange: (String) -> Unit) {
     OutlinedTextField(
@@ -691,10 +706,11 @@ private fun ModernMessageCard(message: String, isError: Boolean, onDismiss: () -
 }
 
 @Composable
-private fun ModernMemberSelectionList(members: List<String>, selectedMembers: Set<String>, onSelectionChange: (Set<String>) -> Unit) {
+private fun ModernMemberSelectionList(members: List<String>, nameMappings: Map<String, String>, selectedMembers: Set<String>, onSelectionChange: (Set<String>) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("Split with", style = MaterialTheme.typography.bodyLarge)
         members.forEach { member ->
+            val displayName = nameMappings[member] ?: member // Resolve name for display
             Row(
                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable {
                     val newSelection = if (selectedMembers.contains(member)) selectedMembers - member else selectedMembers + member
@@ -710,7 +726,7 @@ private fun ModernMemberSelectionList(members: List<String>, selectedMembers: Se
                     }
                 )
                 Spacer(Modifier.width(8.dp))
-                Text(member, style = MaterialTheme.typography.bodyLarge)
+                Text(displayName, style = MaterialTheme.typography.bodyLarge) // Display real name
             }
         }
     }
@@ -719,6 +735,7 @@ private fun ModernMemberSelectionList(members: List<String>, selectedMembers: Se
 @Composable
 private fun ModernCustomSplitList(
     members: List<String>,
+    nameMappings: Map<String, String>,
     selectedMembers: Set<String>,
     individualAmounts: Map<String, String>,
     onMemberSelectionChange: (Set<String>) -> Unit,
@@ -727,6 +744,7 @@ private fun ModernCustomSplitList(
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         members.forEach { member ->
             val isSelected = selectedMembers.contains(member)
+            val displayName = nameMappings[member] ?: member // Resolve name for display
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -739,7 +757,7 @@ private fun ModernCustomSplitList(
                     }
                 )
                 Text(
-                    text = member,
+                    text = displayName, // Display real name
                     modifier = Modifier.weight(1f).padding(start = 8.dp),
                     style = MaterialTheme.typography.bodyLarge,
                     color = if(isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -748,12 +766,17 @@ private fun ModernCustomSplitList(
                 OutlinedTextField(
                     value = if(isSelected) individualAmounts[member] ?: "" else "",
                     onValueChange = { newAmount ->
-                        val newAmounts = individualAmounts.toMutableMap()
-                        newAmounts[member] = newAmount.filter { it.isDigit() || it == '.' }
-                        onAmountChange(newAmounts)
+                        val filtered = newAmount.filter { it.isDigit() || it == '.' }
+                        val decimalCount = filtered.count { it == '.' }
+                        if (decimalCount <= 1) {
+                            val finalAmount = if (filtered.startsWith(".")) "0$filtered" else filtered
+                            val newAmounts = individualAmounts.toMutableMap()
+                            newAmounts[member] = finalAmount
+                            onAmountChange(newAmounts)
+                        }
                     },
                     prefix = { Text("₹ ") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.width(110.dp),
                     enabled = isSelected,
                     shape = RoundedCornerShape(12.dp),
@@ -780,21 +803,28 @@ private fun ModernCustomSplitList(
 private fun ModernMemberSelectionDialog(
     freeMembers: List<String>,
     notFreeMembers: List<String>,
+    nameMappings: Map<String, String>, // Accept the map
     onMemberSelected: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
+    val currentUserName = remember { TokenManager.getCurrentUserName(context) }
+
+    val filteredFreemembers = freeMembers.filter { it != currentUserName }
+    val filteredNotFreeMembers = notFreeMembers.filter { it != currentUserName }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Select Member", fontWeight = FontWeight.Bold) },
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (notFreeMembers.isNotEmpty()) {
+                if (filteredNotFreeMembers.isNotEmpty()) {
                     item { Text("Active Members", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(bottom = 4.dp)) }
-                    items(notFreeMembers) { MemberDialogItem(member = it, onClick = { onMemberSelected(it) }) }
+                    items(filteredNotFreeMembers) { member -> MemberDialogItem(member = member, nameMappings = nameMappings, onClick = { onMemberSelected(member) }) }
                 }
-                if (freeMembers.isNotEmpty()) {
+                if (filteredFreemembers.isNotEmpty()) {
                     item { Text("Pending Members (Not Joined)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)) }
-                    items(freeMembers) { MemberDialogItem(member = it, isPending = true, onClick = { onMemberSelected(it) }) }
+                    items(filteredFreemembers) { member -> MemberDialogItem(member = member, isPending = true, nameMappings = nameMappings, onClick = { onMemberSelected(member) }) }
                 }
             }
         },
@@ -804,7 +834,8 @@ private fun ModernMemberSelectionDialog(
 }
 
 @Composable
-private fun MemberDialogItem(member: String, isPending: Boolean = false, onClick: () -> Unit) {
+private fun MemberDialogItem(member: String, isPending: Boolean = false, nameMappings: Map<String, String>, onClick: () -> Unit) {
+    val displayName = nameMappings[member] ?: member // Resolve name for display
     Surface(
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -816,13 +847,13 @@ private fun MemberDialogItem(member: String, isPending: Boolean = false, onClick
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = member.firstOrNull()?.uppercase() ?: "?",
+                    text = displayName.firstOrNull()?.uppercase() ?: "?", // Use real name for initial
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
                 )
             }
             Spacer(Modifier.width(16.dp))
-            Text(member, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+            Text(displayName, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium) // Display real name
         }
     }
 }

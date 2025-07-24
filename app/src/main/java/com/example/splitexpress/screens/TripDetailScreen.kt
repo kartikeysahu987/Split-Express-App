@@ -36,6 +36,8 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.example.splitexpress.network.*
 import com.example.splitexpress.utils.TokenManager
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -52,24 +54,64 @@ fun TripDetailScreen(navController: NavController, tripId: String) {
             uiState = uiState.copy(isRefreshing = true)
             try {
                 val token = TokenManager.getToken(context) ?: return@launch
-                val myTripsResponse = RetrofitInstance.api.getAllMyTrips(token = token)
+
+                // Step 1: Fetch all primary data concurrently
+                val myTripsResponseDeferred = async { RetrofitInstance.api.getAllMyTrips(token = token) }
+                val transactionsResponseDeferred = async { RetrofitInstance.api.getAllTransactions(token = token, request = GetTransactionsRequest(trip_id = tripId)) }
+                val settlementsResponseDeferred = async { RetrofitInstance.api.getSettlements(token = token, request = GetSettlementsRequest(trip_id = tripId)) }
+                val casualNameResponseDeferred = async { RetrofitInstance.api.getCasualNameByUID(token = token, request = GetCasualNameRequest(trip_id = tripId)) }
+
+                val myTripsResponse = myTripsResponseDeferred.await()
+                val transactionsResponse = transactionsResponseDeferred.await()
+                val settlementsResponse = settlementsResponseDeferred.await()
+                val casualNameResponse = casualNameResponseDeferred.await()
+
                 val currentTrip = myTripsResponse.body()?.user_items?.find { it.trip_id == tripId }
-
-                // Fetch all transactions, including deleted ones, for display
-                val transactionsResponse = RetrofitInstance.api.getAllTransactions(
-                    token = token, request = GetTransactionsRequest(trip_id = tripId)
-                )
-
-                // Fetch settlements. The backend should correctly calculate this by ignoring deleted transactions.
-                val settlementsResponse = RetrofitInstance.api.getSettlements(
-                    token = token, request = GetSettlementsRequest(trip_id = tripId)
-                )
                 val membersResponse = currentTrip?.invite_code?.let { code ->
                     RetrofitInstance.api.getMembers(token = token, request = GetMembersRequest(invite_code = code))
                 }
-                val casualNameResponse = RetrofitInstance.api.getCasualNameByUID(
-                    token = token, request = GetCasualNameRequest(trip_id = tripId)
-                )
+
+                // Step 2: Collect all unique casual names from all data sources
+                val allCasualNames = mutableSetOf<String>()
+                transactionsResponse.body()?.transactions?.forEach {
+                    allCasualNames.add(it.payer_name)
+                    allCasualNames.add(it.reciever_name)
+                }
+                settlementsResponse.body()?.settlements?.forEach {
+                    allCasualNames.add(it.from)
+                    allCasualNames.add(it.to)
+                }
+                membersResponse?.body()?.let {
+                    it.not_free_members?.let { members -> allCasualNames.addAll(members) }
+                    it.free_members?.let { members -> allCasualNames.addAll(members) }
+                }
+                casualNameResponse.body()?.casual_name?.let { allCasualNames.add(it) }
+
+
+                // Step 3: Fetch real names for all casual names concurrently
+                val nameMappingJobs = allCasualNames.map { casualName ->
+                    async {
+                        try {
+                            val response = RetrofitInstance.api.getRealName(
+                                token = token,
+                                request = GetRealNameRequest(trip_id = tripId, name = casualName)
+                            )
+                            if (response.isSuccessful && response.body() != null) {
+                                casualName to response.body()!!.name
+                            } else {
+                                casualName to casualName // Fallback to casual name on error
+                            }
+                        } catch (e: Exception) {
+                            Log.e("TripDetailScreen", "Failed to resolve name for '$casualName'", e)
+                            casualName to casualName // Fallback on exception
+                        }
+                    }
+                }
+                val nameMappings = nameMappingJobs.awaitAll().toMap()
+
+                // Step 4: Resolve current user's name and update the state
+                val currentUserCasualName = casualNameResponse.body()?.casual_name
+                val currentUserRealName = nameMappings[currentUserCasualName] ?: currentUserCasualName
 
                 uiState = uiState.copy(
                     tripName = currentTrip?.trip_name,
@@ -79,7 +121,9 @@ fun TripDetailScreen(navController: NavController, tripId: String) {
                     } ?: emptyList(),
                     settlements = settlementsResponse.body()?.settlements ?: emptyList(),
                     members = membersResponse?.body(),
-                    currentUserName = casualNameResponse.body()?.casual_name,
+                    currentUserName = currentUserRealName,
+                    currentUserCasualName = currentUserCasualName,
+                    nameMappings = nameMappings,
                     isLoading = false,
                     isRefreshing = false,
                     errorMessage = null
@@ -239,7 +283,9 @@ data class TripDetailUiState(
     val transactions: List<Transaction> = emptyList(),
     val settlements: List<Settlement> = emptyList(),
     val members: MembersResponse? = null,
-    val currentUserName: String? = null,
+    val currentUserName: String? = null, // Holds the REAL name for display
+    val currentUserCasualName: String? = null, // Holds the CASUAL name for logic
+    val nameMappings: Map<String, String> = emptyMap(), // Maps casual to real names
     val selectedTab: Int = 0,
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
@@ -332,9 +378,10 @@ private fun TripContent(
     onSettleClick: (Settlement) -> Unit,
     onDeleteRequest: (Transaction) -> Unit
 ) {
+    // Use the casual name for filtering logic, as it's the stable identifier in the data
     val filteredTransactions = uiState.transactions.filter { transaction ->
-        transaction.payer_name.equals(uiState.currentUserName, ignoreCase = true) ||
-                transaction.reciever_name.equals(uiState.currentUserName, ignoreCase = true)
+        transaction.payer_name.equals(uiState.currentUserCasualName, ignoreCase = true) ||
+                transaction.reciever_name.equals(uiState.currentUserCasualName, ignoreCase = true)
     }
     // Count only active transactions for the tab badge
     val activeTransactionCount = filteredTransactions.count { it.isDeleted != true }
@@ -362,14 +409,16 @@ private fun TripContent(
             0 -> items(filteredTransactions, key = { it._id }) { transaction ->
                 TransactionCard(
                     transaction = transaction,
-                    currentUserName = uiState.currentUserName,
+                    currentUserCasualName = uiState.currentUserCasualName,
+                    nameMappings = uiState.nameMappings,
                     onDeleteRequest = { onDeleteRequest(transaction) }
                 )
             }
             1 -> items(uiState.settlements) { settlement ->
                 SettlementCard(
                     settlement = settlement,
-                    currentUserName = uiState.currentUserName,
+                    currentUserCasualName = uiState.currentUserCasualName,
+                    nameMappings = uiState.nameMappings,
                     isSettling = uiState.isSettling?.contains("${settlement.from}-${settlement.to}") == true,
                     onSettleClick = onSettleClick
                 )
@@ -377,8 +426,12 @@ private fun TripContent(
             2 -> {
                 uiState.members?.let { members ->
                     item { MembersSummaryCard(members) }
-                    items(members.not_free_members ?: emptyList()) { member -> MemberCard(member, true) }
-                    items(members.free_members ?: emptyList()) { member -> MemberCard(member, false) }
+                    items(members.not_free_members ?: emptyList()) { member ->
+                        MemberCard(member, true, uiState.nameMappings)
+                    }
+                    items(members.free_members ?: emptyList()) { member ->
+                        MemberCard(member, false, uiState.nameMappings)
+                    }
                 }
             }
         }
@@ -446,12 +499,14 @@ private fun TabNavigation(
 @Composable
 private fun TransactionCard(
     transaction: Transaction,
-    currentUserName: String?,
+    currentUserCasualName: String?,
+    nameMappings: Map<String, String>,
     onDeleteRequest: () -> Unit
 ) {
     val isSettlement = transaction.type.equals("settle", ignoreCase = true)
-    val isPayer = transaction.payer_name.equals(currentUserName, ignoreCase = true)
-    val isReceiver = transaction.reciever_name.equals(currentUserName, ignoreCase = true)
+    // Logic must use the casual name for comparison
+    val isPayer = transaction.payer_name.equals(currentUserCasualName, ignoreCase = true)
+    val isReceiver = transaction.reciever_name.equals(currentUserCasualName, ignoreCase = true)
     val isDeleted = transaction.isDeleted == true
     var menuExpanded by remember { mutableStateOf(false) }
 
@@ -516,11 +571,16 @@ private fun TransactionCard(
                     textDecoration = textDecoration
                 )
                 Spacer(modifier = Modifier.height(2.dp))
+
+                // Resolve casual names to real names for display
+                val resolvedPayer = nameMappings[transaction.payer_name] ?: transaction.payer_name
+                val resolvedReceiver = nameMappings[transaction.reciever_name] ?: transaction.reciever_name
+
                 Text(
                     text = when {
-                        isSettlement -> "${transaction.payer_name} → ${transaction.reciever_name}"
-                        isPayer -> "You paid ${transaction.reciever_name}"
-                        isReceiver -> "${transaction.payer_name} paid you"
+                        isSettlement -> "$resolvedPayer → $resolvedReceiver"
+                        isPayer -> "You paid $resolvedReceiver"
+                        isReceiver -> "$resolvedPayer paid you"
                         else -> "Not involved"
                     },
                     style = MaterialTheme.typography.bodySmall,
@@ -632,12 +692,18 @@ fun formatDateComponents(dateString: String): DateComponents {
 @Composable
 private fun SettlementCard(
     settlement: Settlement,
-    currentUserName: String?,
+    currentUserCasualName: String?,
+    nameMappings: Map<String, String>,
     isSettling: Boolean,
     onSettleClick: (Settlement) -> Unit
 ) {
-    val canSettle = settlement.from.equals(currentUserName, ignoreCase = true)
-    val isReceiver = settlement.to.equals(currentUserName, ignoreCase = true)
+    // Logic must use the casual name for comparison
+    val canSettle = settlement.from.equals(currentUserCasualName, ignoreCase = true)
+    val isReceiver = settlement.to.equals(currentUserCasualName, ignoreCase = true)
+
+    // Resolve casual names to real names for display
+    val resolvedFrom = nameMappings[settlement.from] ?: settlement.from
+    val resolvedTo = nameMappings[settlement.to] ?: settlement.to
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -676,9 +742,9 @@ private fun SettlementCard(
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
                         text = when {
-                            canSettle -> "${settlement.to} owes you"
-                            isReceiver -> "You owe ${settlement.from}"
-                            else -> "${settlement.from} owes ${settlement.to}"
+                            canSettle -> "$resolvedTo owes you"
+                            isReceiver -> "You owe $resolvedFrom"
+                            else -> "$resolvedFrom owes $resolvedTo"
                         },
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.Medium,
@@ -798,8 +864,10 @@ private fun StatItem(label: String, value: String, color: Color) {
 }
 
 @Composable
-private fun MemberCard(memberName: String, hasJoined: Boolean) {
+private fun MemberCard(memberName: String, hasJoined: Boolean, nameMappings: Map<String, String>) {
     val statusColor = if (hasJoined) Color(0xFF4CAF50) else Color(0xFFFF9800)
+    // Resolve casual name to real name for display
+    val resolvedMemberName = nameMappings[memberName] ?: memberName
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -824,7 +892,7 @@ private fun MemberCard(memberName: String, hasJoined: Boolean) {
             Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = memberName,
+                    text = resolvedMemberName,
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.Medium
                 )
@@ -894,13 +962,6 @@ fun parseDate(dateString: String): Long {
         SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).parse(dateString)?.time ?: 0L
     } catch (e: Exception) { 0L }
 }
-
-//fun formatDate(dateString: String): String {
-//    return try {
-//        val date = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).parse(dateString)
-//        SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(date ?: Date())
-//    } catch (e: Exception) { "Date unknown" }
-//}
 
 @Composable
 fun getCategoryColor(description: String): Color {
